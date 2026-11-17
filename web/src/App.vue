@@ -6,7 +6,6 @@ import FilingPicker from './components/FilingPicker.vue';
 import StatementTable from './components/StatementTable.vue';
 import IndicatorsTable from './components/IndicatorsTable.vue';
 import ValuationPanel from './components/ValuationPanel.vue';
-import TvEmbedChart from './components/TvEmbedChart.vue';
 import { simplifyStatement } from '../../shared/simplify.js';
 import BrowsePage from './components/BrowsePage.vue';
 import WatchlistPage from './components/WatchlistPage.vue';
@@ -65,7 +64,6 @@ const cached = {
   indicators: memoize((id, p) => api.indicators(id, p), 24),
   valuation: memoize((id, p) => api.valuation(id, p), 24),
   score: memoize((cik, accession) => api.score(cik, accession), 60),
-  tvSymbol: memoize((ticker) => api.tvSymbol(ticker), 60),
   bars: memoize((ticker) => api.bars(ticker), 20),
 };
 
@@ -187,26 +185,22 @@ const isValuation = computed(() => tab.value === 'valuation');
 
 // K-line tab: the stock's own daily bars (the ones the custom ETFs and the
 // valuation use: the server's sources, or the files the static site ships)
-// with volume and the 5 / 20 / 60-day averages; TradingView's embedded chart
-// (its data, its indicators) is the alternative, and what is shown when there
-// are no bars. The TradingView symbol is asked for on TWSE (TWSE:2330) so a
-// bare number cannot resolve to another market's listing.
+// with volume and the 5 / 20 / 60-day averages. The link out to TradingView
+// names the symbol on TWSE (TWSE:2330) so a bare number cannot resolve to
+// another market's listing.
 const isChart = computed(() => tab.value === 'chart');
-const tvSymbol = ref(null);
 const chartRange = ref(localStorage.getItem('stockscan-tw.krange') || '12M');
 const chartColors = ref(localStorage.getItem('stockscan-tw.kcolors') || 'tw');
-const chartSource = ref(localStorage.getItem('stockscan-tw.kchart') === 'tv' ? 'tv' : 'own');
 watch(chartRange, (v) => localStorage.setItem('stockscan-tw.krange', v));
 watch(chartColors, (v) => localStorage.setItem('stockscan-tw.kcolors', v));
-watch(chartSource, (v) => localStorage.setItem('stockscan-tw.kchart', v));
 const MA_PERIODS = [5, 20, 60];
 const chartBars = ref(null); // { ticker, source, currency, from, to, bars: [{ time, open, high, low, close, volume }] }
 const chartBarsError = ref(null);
 const chartAdvanced = ref(false);
 watch(
-  [tab, company, chartSource],
-  async ([tb, c, src]) => {
-    if (tb !== 'chart' || !c || src !== 'own') return;
+  [tab, company],
+  async ([tb, c]) => {
+    if (tb !== 'chart' || !c) return;
     const ticker = c.tickers?.[0];
     if (!ticker || chartBars.value?.ticker === ticker) return;
     chartBars.value = null;
@@ -219,28 +213,6 @@ watch(
       chartBars.value = { ticker, source: r.source, currency: r.currency, from: r.days[0].date, to: r.days.at(-1).date, bars: r.days.map((d) => ({ time: d.date, open: d.open, high: d.high, low: d.low, close: d.close, volume: d.volume })) };
     } catch (e) {
       if (company.value === c) chartBarsError.value = e.message;
-    }
-  },
-  { immediate: true },
-);
-// TradingView's embed: chosen, or standing in for missing bars
-const chartViaTv = computed(() => chartSource.value === 'tv' || !!chartBarsError.value);
-watch(
-  [tab, company],
-  async ([t, c]) => {
-    if (t !== 'chart' || !c) return;
-    const ticker = c.tickers?.[0];
-    if (!ticker) {
-      tvSymbol.value = { ticker: null, symbol: null };
-      return;
-    }
-    if (tvSymbol.value?.ticker === ticker) return;
-    tvSymbol.value = null;
-    try {
-      const r = await cached.tvSymbol(ticker);
-      if (company.value === c) tvSymbol.value = r;
-    } catch {
-      if (company.value === c) tvSymbol.value = { ticker, symbol: `TWSE:${ticker}`, known: false };
     }
   },
   { immediate: true },
@@ -375,7 +347,6 @@ function planPrefetch() {
   if (!f.quartersYear) prefetch(`score:${f.accession}`, () => cached.score(f.cik, f.accession), { tag, priority: 2 });
   const ip = indicatorsParams.value;
   if (ip) prefetch(`ind:${cik}:${JSON.stringify(ip)}`, () => cached.indicators(cik, ip), { tag, priority: 2 });
-  if (c.tickers?.[0]) prefetch(`tv:${c.tickers[0]}`, () => cached.tvSymbol(c.tickers[0]), { tag, priority: 2 });
   const i = c.filings.findIndex((x) => x.accession === f.accession);
   for (const nf of c.filings.slice(Math.max(i, 0) + 1, Math.max(i, 0) + 4)) prefetch(`filing:${nf.accession}:${view.value}`, () => cached.filing(nf.cik, nf.accession, view.value), { tag, priority: 1 });
   const vp = valuationParams.value;
@@ -652,13 +623,6 @@ onMounted(() => {
             </div>
             <div v-else-if="isChart" class="options">
               <label>
-                {{ t('chart.source') }}
-                <select v-model="chartSource">
-                  <option value="own">{{ t('chart.sourceOwn') }}</option>
-                  <option value="tv">{{ t('chart.sourceTv') }}</option>
-                </select>
-              </label>
-              <label>
                 {{ t('chart.range') }}
                 <select v-model="chartRange">
                   <option value="1M">{{ t('chart.months', { n: 1 }) }}</option>
@@ -678,7 +642,7 @@ onMounted(() => {
                   <option value="us">{{ t('chart.us') }}</option>
                 </select>
               </label>
-              <a v-if="tvSymbol?.symbol" :href="`https://www.tradingview.com/chart/?symbol=${encodeURIComponent(tvSymbol.symbol)}`" target="_blank" rel="noopener" class="small">{{ t('chart.openTv') }}</a>
+              <a v-if="company.tickers?.[0]" :href="`https://www.tradingview.com/chart/?symbol=TWSE:${encodeURIComponent(company.tickers[0])}`" target="_blank" rel="noopener" class="small">{{ t('chart.openTv') }}</a>
             </div>
             <div v-else class="options">
               <label v-if="!data.derived">
@@ -720,21 +684,11 @@ onMounted(() => {
           </template>
           <template v-else-if="isChart">
             <p v-if="!company.tickers?.length" class="muted">{{ t('chart.noTicker') }}</p>
-            <template v-else-if="!chartViaTv">
-              <Loading v-if="!chartBars" :text="t('chart.loadingBars')" />
-              <template v-else>
-                <Note>{{ t('chart.ownNote', { source: chartBars.source, from: chartBars.from, to: chartBars.to, n: chartBars.bars.length.toLocaleString() }) }}{{ isStatic ? t('chart.ownNoteStatic') : '' }}</Note>
-                <KlineChart :bars="chartBars.bars" :label="`${company.ticker} ${company.name}`" :colors="chartColors" :advanced="chartAdvanced" :range="chartRange" volume :ma="MA_PERIODS" :height="isPhone ? 400 : 580" />
-              </template>
-            </template>
-            <Loading v-else-if="!tvSymbol" :text="t('chart.lookup')" />
+            <p v-else-if="chartBarsError" class="muted">{{ t('chart.barsError', { err: chartBarsError }) }}</p>
+            <Loading v-else-if="!chartBars" :text="t('chart.loadingBars')" />
             <template v-else>
-              <p v-if="chartBarsError && chartSource === 'own'" class="muted small">{{ t('chart.noBarsFallback', { err: chartBarsError }) }}</p>
-              <Note>
-                {{ tvSymbol.symbol }}<template v-if="tvSymbol.exchange"> · {{ tvSymbol.exchange }}</template> · {{ t('chart.embedNote') }}
-                <span v-if="tvSymbol.known === false">{{ t('chart.unknown') }}</span>
-              </Note>
-              <TvEmbedChart :expression="tvSymbol.symbol" :range="chartRange" :colors="chartColors" :height="isPhone ? 400 : 620" volume symbol-change />
+              <Note>{{ t('chart.ownNote', { source: chartBars.source, from: chartBars.from, to: chartBars.to, n: chartBars.bars.length.toLocaleString() }) }}{{ isStatic ? t('chart.ownNoteStatic') : '' }}</Note>
+              <KlineChart :bars="chartBars.bars" :label="`${company.ticker} ${company.name}`" :colors="chartColors" :advanced="chartAdvanced" :range="chartRange" volume :ma="MA_PERIODS" :height="isPhone ? 400 : 580" />
             </template>
           </template>
           <template v-else-if="isValuation">
