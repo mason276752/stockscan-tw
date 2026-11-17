@@ -1,0 +1,10 @@
+node_modules
+web/node_modules
+web/dist
+data
+*.log
+.env
+*.jpg
+*.png
+.git
+web/dist-static
