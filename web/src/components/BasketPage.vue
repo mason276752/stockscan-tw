@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { api } from '../api';
-import { url } from '../base';
+import { loadTvLibrary } from '../tvLibrary';
 import CompanySearch from './CompanySearch.vue';
 import KlineChart from './KlineChart.vue';
 import TvEmbedChart from './TvEmbedChart.vue';
@@ -183,21 +183,10 @@ async function loadQuotes() {
       noBars.value = !quotes.value.bars;
       if (!noBars.value && localStorage.getItem('stockscan-tw.basket.chart') !== 'widget') chartSource.value = 'own';
     }
-    if (quotes.value.tvLibrary && !window.TradingView?.widget) await loadTvLibrary();
-    advanced.value = !!window.TradingView?.widget;
+    advanced.value = await loadTvLibrary();
   } catch {
     quotes.value = null;
   }
-}
-// the licensed library, served by the backend from web/assets/tradingview/
-function loadTvLibrary() {
-  return new Promise((resolve) => {
-    const s = document.createElement('script');
-    s.src = url('/tradingview/charting_library/charting_library.standalone.js');
-    s.onload = resolve;
-    s.onerror = resolve;
-    document.head.appendChild(s);
-  });
 }
 async function reconnect() {
   try {

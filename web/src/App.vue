@@ -13,6 +13,8 @@ import WatchlistPage from './components/WatchlistPage.vue';
 import ScreenerPage from './components/ScreenerPage.vue';
 // the custom-ETF page brings its charting library along: loaded when first opened
 const BasketPage = defineAsyncComponent(() => import('./components/BasketPage.vue'));
+// the K-line chart (and lightweight-charts with it) loads with the chart tab
+const KlineChart = defineAsyncComponent(() => import('./components/KlineChart.vue'));
 import ScoreCard from './components/ScoreCard.vue';
 import Note from './components/Note.vue';
 import Loading from './components/Loading.vue';
@@ -21,6 +23,7 @@ import { THEMES, theme } from './theme';
 import { isPhone } from './viewport';
 import { drop, prefetch, setBusy } from './prefetch';
 import { memoize } from './memo';
+import { loadTvLibrary } from './tvLibrary';
 import { isWatched, toggleWatch, watchlist } from './watchlist';
 import { baskets } from './baskets';
 import { dateLocale, isZh, locale, LOCALES, t } from './i18n';
@@ -63,6 +66,7 @@ const cached = {
   valuation: memoize((id, p) => api.valuation(id, p), 24),
   score: memoize((cik, accession) => api.score(cik, accession), 60),
   tvSymbol: memoize((ticker) => api.tvSymbol(ticker), 60),
+  bars: memoize((ticker) => api.bars(ticker), 20),
 };
 
 const company = ref(null);
@@ -181,15 +185,46 @@ watch([tab, valuationParams], ([t, p], [, prev]) => {
 });
 const isValuation = computed(() => tab.value === 'valuation');
 
-// K-line tab: TradingView's own chart of this one stock (its data, its
-// indicators); the symbol is asked for on TWSE (TWSE:2330) so a bare number
-// cannot resolve to another market's listing
+// K-line tab: the stock's own daily bars (the ones the custom ETFs and the
+// valuation use: the server's sources, or the files the static site ships)
+// with volume and the 5 / 20 / 60-day averages; TradingView's embedded chart
+// (its data, its indicators) is the alternative, and what is shown when there
+// are no bars. The TradingView symbol is asked for on TWSE (TWSE:2330) so a
+// bare number cannot resolve to another market's listing.
 const isChart = computed(() => tab.value === 'chart');
 const tvSymbol = ref(null);
 const chartRange = ref(localStorage.getItem('stockscan-tw.krange') || '12M');
 const chartColors = ref(localStorage.getItem('stockscan-tw.kcolors') || 'tw');
+const chartSource = ref(localStorage.getItem('stockscan-tw.kchart') === 'tv' ? 'tv' : 'own');
 watch(chartRange, (v) => localStorage.setItem('stockscan-tw.krange', v));
 watch(chartColors, (v) => localStorage.setItem('stockscan-tw.kcolors', v));
+watch(chartSource, (v) => localStorage.setItem('stockscan-tw.kchart', v));
+const MA_PERIODS = [5, 20, 60];
+const chartBars = ref(null); // { ticker, source, currency, from, to, bars: [{ time, open, high, low, close, volume }] }
+const chartBarsError = ref(null);
+const chartAdvanced = ref(false);
+watch(
+  [tab, company, chartSource],
+  async ([tb, c, src]) => {
+    if (tb !== 'chart' || !c || src !== 'own') return;
+    const ticker = c.tickers?.[0];
+    if (!ticker || chartBars.value?.ticker === ticker) return;
+    chartBars.value = null;
+    chartBarsError.value = null;
+    loadTvLibrary().then((ok) => (chartAdvanced.value = ok));
+    try {
+      const r = await cached.bars(ticker);
+      if (company.value !== c) return;
+      if (!r.days?.length) throw new Error(t('chart.noBars'));
+      chartBars.value = { ticker, source: r.source, currency: r.currency, from: r.days[0].date, to: r.days.at(-1).date, bars: r.days.map((d) => ({ time: d.date, open: d.open, high: d.high, low: d.low, close: d.close, volume: d.volume })) };
+    } catch (e) {
+      if (company.value === c) chartBarsError.value = e.message;
+    }
+  },
+  { immediate: true },
+);
+// TradingView's embed: chosen, or standing in for missing bars
+const chartViaTv = computed(() => chartSource.value === 'tv' || !!chartBarsError.value);
 watch(
   [tab, company],
   async ([t, c]) => {
@@ -617,6 +652,13 @@ onMounted(() => {
             </div>
             <div v-else-if="isChart" class="options">
               <label>
+                {{ t('chart.source') }}
+                <select v-model="chartSource">
+                  <option value="own">{{ t('chart.sourceOwn') }}</option>
+                  <option value="tv">{{ t('chart.sourceTv') }}</option>
+                </select>
+              </label>
+              <label>
                 {{ t('chart.range') }}
                 <select v-model="chartRange">
                   <option value="1M">{{ t('chart.months', { n: 1 }) }}</option>
@@ -678,8 +720,16 @@ onMounted(() => {
           </template>
           <template v-else-if="isChart">
             <p v-if="!company.tickers?.length" class="muted">{{ t('chart.noTicker') }}</p>
+            <template v-else-if="!chartViaTv">
+              <Loading v-if="!chartBars" :text="t('chart.loadingBars')" />
+              <template v-else>
+                <Note>{{ t('chart.ownNote', { source: chartBars.source, from: chartBars.from, to: chartBars.to, n: chartBars.bars.length.toLocaleString() }) }}{{ isStatic ? t('chart.ownNoteStatic') : '' }}</Note>
+                <KlineChart :bars="chartBars.bars" :label="`${company.ticker} ${company.name}`" :colors="chartColors" :advanced="chartAdvanced" :range="chartRange" volume :ma="MA_PERIODS" :height="isPhone ? 400 : 580" />
+              </template>
+            </template>
             <Loading v-else-if="!tvSymbol" :text="t('chart.lookup')" />
             <template v-else>
+              <p v-if="chartBarsError && chartSource === 'own'" class="muted small">{{ t('chart.noBarsFallback', { err: chartBarsError }) }}</p>
               <Note>
                 {{ tvSymbol.symbol }}<template v-if="tvSymbol.exchange"> · {{ tvSymbol.exchange }}</template> · {{ t('chart.embedNote') }}
                 <span v-if="tvSymbol.known === false">{{ t('chart.unknown') }}</span>

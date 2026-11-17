@@ -58,6 +58,10 @@
   /* candles: US convention (green up) - Asian (red up) swaps them */
   --up: #16a34a;
   --down: #dc2626;
+  /* moving averages on the K-line chart: 5 / 20 / 60 days */
+  --ma1: #d97706;
+  --ma2: #7c3aed;
+  --ma3: #0891b2;
   color-scheme: light;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans TC', 'PingFang TC', sans-serif;
   font-size: 14px;
@@ -114,6 +118,9 @@
   --bad-bar: #ef4444;
   --up: #22c55e;
   --down: #ef4444;
+  --ma1: #fbbf24;
+  --ma2: #a78bfa;
+  --ma3: #22d3ee;
   color-scheme: dark;
 }
 

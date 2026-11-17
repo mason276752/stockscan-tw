@@ -1,11 +1,12 @@
 // Datafeed for TradingView's Advanced Charts library (the licensed
 // "charting_library" in web/assets/tradingview/), serving the bars the page
-// already computed: the basket index and, as a second symbol, the rebased
-// benchmark. Daily only; the library builds weeks / months itself. API per
+// already has: a stock's daily bars (with volume) or the basket index and,
+// as a second symbol, the rebased benchmark. Daily only; the library builds
+// weeks / months itself. API per
 // https://www.tradingview.com/charting-library-docs/latest/connecting_data/datafeed-api/
 const toMs = (d) => Date.parse(`${d}T00:00:00Z`);
 
-export function makeDatafeed({ name, bars, overlayName = '', overlay = () => [] }) {
+export function makeDatafeed({ name, bars, overlayName = '', overlay = () => [], volume = false }) {
   const symbols = () => {
     const out = [{ name, description: name, get: bars, kind: 'ohlc' }];
     if (overlayName) out.push({ name: overlayName, description: `${overlayName} (start = 100)`, get: overlay, kind: 'line' });
@@ -16,8 +17,8 @@ export function makeDatafeed({ name, bars, overlayName = '', overlay = () => [] 
     name: s.name,
     description: s.description,
     type: 'index',
-    session: '0930-1600',
-    timezone: 'America/New_York',
+    session: '0900-1330',
+    timezone: 'Asia/Taipei',
     exchange: 'stockscan-tw',
     listed_exchange: 'stockscan-tw',
     format: 'price',
@@ -29,6 +30,7 @@ export function makeDatafeed({ name, bars, overlayName = '', overlay = () => [] 
     has_weekly_and_monthly: false, // built from the daily bars
     supported_resolutions: ['1D', '1W', '1M'],
     volume_precision: 0,
+    visible_plots_set: s.kind === 'ohlc' && volume ? 'ohlcv' : 'ohlc',
     data_status: 'endofday',
   });
   return {
@@ -48,7 +50,7 @@ export function makeDatafeed({ name, bars, overlayName = '', overlay = () => [] 
         const s = symbols().find((x) => x.name === symbolInfo.name) || symbols()[0];
         const rows = s.get();
         const out = rows
-          .map((b) => (s.kind === 'line' ? { time: toMs(b.time), open: b.value, high: b.value, low: b.value, close: b.value } : { time: toMs(b.time), open: b.open, high: b.high, low: b.low, close: b.close }))
+          .map((b) => (s.kind === 'line' ? { time: toMs(b.time), open: b.value, high: b.value, low: b.value, close: b.value } : { time: toMs(b.time), open: b.open, high: b.high, low: b.low, close: b.close, ...(volume ? { volume: b.volume ?? 0 } : {}) }))
           .filter((b) => b.time >= from * 1000 && b.time < to * 1000);
         if (out.length) return onResult(out, { noData: false });
         // nothing in the window: point the library at the newest bar older than `from`, if any
