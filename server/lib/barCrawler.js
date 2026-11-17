@@ -1,22 +1,23 @@
-// Background crawl of the daily bars of every company in the ticker table,
-// from TradingView: ten years the first time a symbol is seen (~30 KB), then
-// only the bars since the last one - a run after the close is one short
-// request per symbol, and the year files on disk change by a few bytes.
+// Background crawl of the daily bars of every listed company (and the 0050
+// benchmark), from TradingView: ten years the first time a symbol is seen
+// (~30 KB), then only the bars since the last one - a run after the close is
+// one short request per symbol, and the year files on disk change by a few
+// bytes.
 //
-// One run per trading day, at 19:30 New York - in the hour the 23-hour US
-// session (from December 2026: 20:00 ET to 19:00 ET the next day) is closed,
-// when the day's bar is certainly final - and at startup if the last run
-// predates that. Symbols TradingView
-// does not know are retried a week later. STOCKSCAN_BARS_CRAWL=0 turns it
-// off; it also needs TradingView (TV_ENABLED).
+// One run per trading day, at 15:00 Taipei - when the day's bar is final
+// (the 13:30 close, the fixed-price session to 14:30) - and at startup if
+// the last run predates that. Symbols TradingView does not know are retried
+// a week later. STOCKSCAN_BARS_CRAWL=0 turns it off; it also needs
+// TradingView (TV_ENABLED).
 
 import { store } from './store.js';
-import { tickerTable } from './edgar.js';
+import { listedTable } from './twse.js';
+import { BENCHMARK } from './basket.js';
 import { lastClose, syncTvBars } from './bars.js';
 import { tvStatus } from './tvws.js';
 
 const LANES = Math.max(1, Number(process.env.STOCKSCAN_BARS_CRAWL_PARALLEL) || 6); // TradingView allows 8 sessions at once; leave room for the user
-const AFTER_CLOSE = 3.5 * 3600 * 1000; // 16:00 close + 3.5 h = 19:30 ET, inside the 19:00-20:00 pause of the 23-hour session
+const AFTER_CLOSE = 1.5 * 3600 * 1000; // 13:30 close + 1.5 h = 15:00 Taipei
 const POLL = 5 * 60 * 1000; // how often the clock is checked
 const MAX_FAILS = 3;
 const RETRY_FAILED = 7 * 24 * 3600 * 1000;
@@ -50,8 +51,8 @@ export function createBarCrawler(client, { enabled = true } = {}) {
     state.round++;
     state.startedAt = new Date().toISOString();
     state.position = state.fetched = state.fresh = state.failed = state.bars = 0;
-    const tickers = (await tickerTable(client)).map((t) => t.ticker).filter(Boolean);
-    const symbols = [...new Set(tickers.map((t) => t.toUpperCase()))].sort();
+    const tickers = (await listedTable(client)).filter((c) => c.industry !== '91').map((c) => c.ticker);
+    const symbols = [...new Set([...tickers, BENCHMARK])].sort();
     state.total = symbols.length;
     const timer = setInterval(logProgress, LOG_EVERY);
     let next = 0;
@@ -127,7 +128,7 @@ export function createBarCrawler(client, { enabled = true } = {}) {
     start() {
       if (state.enabled) loop();
     },
-    // one pass over the ticker table now, then done: for a scheduled job
+    // one pass over the listed companies now, then done: for a scheduled job
     // (the GitHub Actions build fetches this year's bars before publishing)
     async runOnce() {
       await run();

@@ -48,7 +48,7 @@ export async function priceSeries(ticker) {
   return {
     symbol: bars.symbol,
     source: bars.source,
-    currency: bars.currency || 'USD',
+    currency: bars.currency || 'TWD',
     days: bars.days.map((d) => ({ date: d.date, close: d.close })),
     splits: ev.splits,
     dividends: ev.dividends,

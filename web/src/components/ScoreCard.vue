@@ -38,7 +38,7 @@ const byCat = computed(() => props.score.categories.map((c) => ({ ...c, items: p
         </div>
       </div>
       <div class="meta muted small">
-        {{ score.form }} {{ score.fiscalYear }} {{ score.fiscalPeriod }} · {{ t('meta.periodEnd') }} {{ score.periodEnd }}<br />
+        {{ score.fiscalYear }} {{ score.fiscalPeriod }} · {{ t('meta.periodEnd') }} {{ score.periodEnd }}<br />
         {{ basisNote }}<br />
         {{ t('sc.coverage', { n: score.coverage }) }} · <span class="link">{{ open ? t('sc.hide') : t('sc.show') }}</span>
       </div>

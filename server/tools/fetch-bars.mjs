@@ -1,16 +1,16 @@
-// Bring every ticker's TradingView daily bars up to date - one pass, then
+// Bring every listed company's TradingView daily bars up to date - one pass, then
 // exit. The scheduled GitHub Actions job runs this before building the static
 // site: the checkout has the finished years (data/bars/**/<year>.zst, in git);
 // this fetches the running year (head.zst, not in git - kept between runs by
 // actions/cache) so the published site has bars to today. By hand:
 // npm run fetch:bars. Needs TradingView (TV_ENABLED not 0).
-import { SecClient } from '../lib/secClient.js';
+import { TwClient } from '../lib/twClient.js';
 import { openStore } from '../lib/store.js';
 import { barStore, openBarStore } from '../lib/barStore.js';
 import { createBarCrawler } from '../lib/barCrawler.js';
 
 const t0 = Date.now();
-const client = new SecClient();
+const client = new TwClient();
 openStore();
 openBarStore();
 const before = barStore.stats();

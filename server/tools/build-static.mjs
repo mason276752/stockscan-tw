@@ -1,17 +1,17 @@
 // Build the pure-frontend site: the Vue app compiled with VITE_STATIC=1, the
-// saved filings / scores as they are in data/store, and the indexes the
+// saved reports / scores as they are in data/store, and the indexes the
 // browser needs because a static host cannot list directories or run the
-// screener (company lists, latest scores, market snapshot, ETF holdings).
+// screener (company lists, latest scores, market snapshot).
 //
 //   node server/tools/build-static.mjs [--out web/dist-static] [--link]
 //
 // Output is a directory to put on any static host (GitHub Pages, S3, nginx).
 // --link hard-links the store files instead of copying them (same disk).
-// Everything comes from the local store and caches; with SEC_USER_AGENT set
-// the ETF list / holdings that are not cached yet are fetched from EDGAR.
+// Everything comes from the local store and caches; the TWSE listed-company
+// table and the market snapshot are refreshed when the network allows.
 //
-// The slow parts - copying 900 MB of store, decoding 60,000 filing / score
-// files for their headers, zstd-19 of the indexes - are done by the Rust
+// The slow parts - copying the store, decoding every report / score file
+// for its header, zstd-19 of the indexes - are done by the Rust
 // helper tools/stockscan-static: the committed binary for this platform
 // (bin/stockscan-static-<arch>-<os>; the Linux one is what the Pages
 // workflow runs, nothing is compiled there), else a local cargo build
@@ -64,10 +64,10 @@ const { openStore, store } = await import('../lib/store.js');
 openStore();
 const { SCRAPE_VERSION } = await import('../lib/scrape.js');
 const { SCORE_VERSION, latestScores } = await import('../lib/score.js');
-const { filerCounts, screenColumns, screenRows, scoreBadge, sicCounts } = await import('../lib/screen.js');
-const { fiscalLabel, filingFile, scoreFile, DEFAULT_FORMS } = await import('../lib/filings.js');
-const { lookupFiler, sicInfo } = await import('../lib/universe.js');
-const { POPULAR_ETFS } = await import('../lib/etf.js');
+const { industryCounts, screenColumns, screenRows, scoreBadge } = await import('../lib/screen.js');
+const { filingFile, scoreFile, parseAccession, filingRecord, byPeriodDesc } = await import('../lib/filings.js');
+const { universeOf } = await import('../lib/universe.js');
+const { companyRecord } = await import('../lib/companies.js');
 
 function copyTree(from, to) {
   if (NATIVE) return native('copy', from, to, ...(LINK ? ['--link'] : []));
@@ -108,8 +108,8 @@ fs.mkdirSync(idx, { recursive: true });
 // the hash of the JSON): a static host may not compress what it serves and
 // the browser has zstd-wasm anyway (the filings need it); the name changing
 // only with the content lets the browser keep an index across builds until
-// it really changes (the SIC universe, the statement documentation and the
-// ETF lists rarely do). meta.json (plain, always revalidated) maps each
+// it really changes (the industry counts and the listed table rarely do).
+// meta.json (plain, always revalidated) maps each
 // index to its current file. With the native helper the raw JSON is written
 // now and all of them are compressed together (in parallel) at the end.
 const toCompress = [];
@@ -149,101 +149,70 @@ if (NATIVE) {
   console.log(`build-static: decoded ${Object.keys(headers).length} headers, ${Object.keys(scoreJson).length} scores in ${((Date.now() - t) / 1000).toFixed(1)} s`);
 }
 
-// the ticker table, the SIC / filer universe and the market snapshot: from
-// the caches when fresh, else fetched (SEC needs SEC_USER_AGENT; a CI runner
-// starts with no cache at all)
-let client = null;
-try {
-  const { SecClient } = await import('../lib/secClient.js');
-  client = new SecClient();
-} catch (err) {
-  console.warn(`build-static: ${err.message} - using cached data only`);
-}
-const { tickerTable, savedTickers } = await import('../lib/edgar.js');
-const { getUniverse } = await import('../lib/universe.js');
+// the TWSE listed-company table and the market snapshot: refreshed when the
+// network allows, else the saved copies (data/store/listed.json is in the
+// data ref, so even a runner that cannot reach TWSE has it)
+const { TwClient } = await import('../lib/twClient.js');
+const { refreshListed, savedListed } = await import('../lib/twse.js');
 const { marketSnapshot } = await import('../lib/market.js');
-let tickers = savedTickers()?.value || []; // the cache, else data/store/tickers.json (in git)
-let universe = store.getDoc('universe.json')?.value || { updatedAt: null, datasets: [], companies: [] };
-let market = store.getKV('market:snapshot')?.value || null;
-if (client) {
-  try {
-    tickers = await tickerTable(client);
-    console.log(`build-static: ticker table ${tickers.length}`);
-    universe = await getUniverse(client);
-    console.log(`build-static: universe ${universe.companies.length} filers`);
-  } catch (err) {
-    console.warn(`build-static: SEC data: ${err.message}`);
-  }
+const client = new TwClient();
+let listed = savedListed()?.value || [];
+let listedAt = savedListed()?.updatedAt || null;
+try {
+  listed = await refreshListed(client);
+  listedAt = new Date().toISOString();
+  console.log(`build-static: TWSE listed companies ${listed.length}`);
+} catch (err) {
+  console.warn(`build-static: TWSE listed-company table: ${err.message} - using the saved one (${listed.length})`);
 }
+let market = store.getKV('market:snapshot')?.value || null;
 try {
   market = (await marketSnapshot({ wait: true })) || market;
-  console.log(`build-static: market snapshot ${market?.count ?? 0} tickers`);
+  console.log(`build-static: market snapshot ${market?.count ?? 0} symbols`);
 } catch (err) {
   console.warn(`build-static: market snapshot: ${err.message}`);
 }
-// without these the site is broken (no search, no filing by ticker, empty
-// browse / screener): fail the build rather than publish it over a good one
-if (!tickers.length || !universe.companies.length) {
-  console.error(`build-static: ERROR ${!tickers.length ? 'no ticker table' : 'no universe'} - neither cached (data/cache.sqlite), in the store (data/store/${!tickers.length ? 'tickers' : 'universe'}.json) nor fetched from SEC (set SEC_USER_AGENT)`);
+// without it the site is broken (no search, no company page, empty browse /
+// screener): fail the build rather than publish it over a good one
+if (!listed.length) {
+  console.error('build-static: ERROR no listed-company table - neither in the store (data/store/listed.json) nor fetched from the TWSE OpenAPI');
   process.exit(1);
 }
+const universe = universeOf(listed, market?.byTicker || null, listedAt);
 const byCik = new Map(universe.companies.map((c) => [c.cik, c]));
-const tickersByCik = new Map();
-for (const t of tickers) (tickersByCik.get(t.cik) || tickersByCik.set(t.cik, []).get(t.cik)).push(t.ticker);
 
-// companies: every company with a saved filing, with its saved filings (the
-// list the filing picker shows) - header from the cached EDGAR submissions
-// when we have them, else from the ticker table / universe
-console.log('build-static: reading filing headers …');
+// companies: every listed company, with its saved reports (the list the
+// report picker shows). The store paths are derived in the browser when they
+// follow the naming - file / scoreFile are only spelled out when they do
+// not, scoreFile: true when they do.
+console.log('build-static: reading report headers …');
 const filingsByCik = new Map();
 for (const f of store.allFilings()) (filingsByCik.get(f.cik) || filingsByCik.set(f.cik, []).get(f.cik)).push(f);
 const scoreFiles = new Map(store.allScores().filter((s) => s.version === SCORE_VERSION).map((s) => [s.accession, s.file]));
-const allowed = new Set(DEFAULT_FORMS.map((f) => f.toUpperCase()));
 const companies = {};
-let headers = 0;
-for (const [cik, list] of filingsByCik) {
-  const sub = store.getDoc(`companies/${String(cik).padStart(10, '0')}.json`)?.value || null;
-  if (sub) headers++;
-  const u = byCik.get(cik);
-  const fye = sub?.fiscalYearEnd || null;
+let withReports = 0;
+for (const row of listed) {
   const filings = [];
-  for (const rec of list) {
+  for (const rec of filingsByCik.get(row.cik) || []) {
+    const p = parseAccession(rec.accession);
     const h = store.filingHeader(rec.accession);
-    if (!h) continue;
-    const form = h.form || rec.form || '';
-    if (!allowed.has(form.toUpperCase())) continue;
-    const reportDate = h.periodEnd || rec.reportDate || null;
-    const label = fye ? fiscalLabel(form, reportDate, fye) : { fiscalYear: h.fiscalYear ? Number(h.fiscalYear) : null, fiscalPeriod: h.fiscalPeriod || null };
-    // (document / viewer URLs are derived in the browser from primaryDocument;
-    // so are the store paths when they follow the naming - file / scoreFile
-    // are only spelled out when they do not, scoreFile: true when they do)
-    const f = { accession: rec.accession, form, filingDate: h.filingDate || null, reportDate, primaryDocument: h.primaryDocument || null, ...label };
-    if (rec.file !== filingFile(cik, f, SCRAPE_VERSION)) f.file = rec.file;
+    if (!p || !h) continue;
+    const full = filingRecord(p.code, p.year, p.quarter, { filingDate: h.filingDate, reportId: h.reportId });
+    const f = { accession: full.accession, form: full.form, filingDate: full.filingDate, reportDate: full.reportDate, fiscalYear: full.fiscalYear, fiscalPeriod: full.fiscalPeriod, reportId: full.reportId };
+    if (rec.file !== filingFile(row.cik, f, SCRAPE_VERSION)) f.file = rec.file;
     const sf = scoreFiles.get(rec.accession);
-    if (sf) f.scoreFile = sf === scoreFile(cik, f, SCORE_VERSION) ? true : sf;
+    if (sf) f.scoreFile = sf === scoreFile(row.cik, f, SCORE_VERSION) ? true : sf;
     filings.push(f);
   }
-  if (!filings.length) continue;
-  filings.sort((a, b) => (a.filingDate < b.filingDate ? 1 : a.filingDate > b.filingDate ? -1 : 0));
-  companies[cik] = {
-    cik,
-    name: sub?.name || u?.name || tickers.find((t) => t.cik === cik)?.name || String(cik),
-    tickers: sub?.tickers || tickersByCik.get(cik) || u?.tickers || [],
-    exchanges: sub?.exchanges || [],
-    fiscalYearEnd: fye,
-    sic: sub?.sic || u?.sic || null,
-    sicDescription: sub?.sicDescription || sicInfo(u?.sic)?.title || null,
-    filer: (() => {
-      const f = lookupFiler(cik);
-      return f ? { afs: f.afs, filerStatus: f.filerStatus, wksi: f.wksi, publicFloat: f.publicFloat, publicFloatDate: f.publicFloatDate, publicFloatAdjusted: f.publicFloatAdjusted } : null;
-    })(),
-    filings,
-  };
+  filings.sort(byPeriodDesc);
+  if (filings.length) withReports++;
+  const { filings: _, ...rec } = companyRecord(row, []);
+  companies[row.cik] = { ...rec, filings };
 }
 write('companies.json', companies);
-console.log(`build-static: ${Object.keys(companies).length} companies (${headers} with EDGAR headers)`);
+console.log(`build-static: ${Object.keys(companies).length} listed companies, ${withReports} with saved reports`);
 
-write('tickers.json', tickers.map((t) => ({ cik: t.cik, ticker: t.ticker, name: t.name })));
+write('tickers.json', listed.map((r) => ({ cik: r.cik, ticker: r.ticker, name: r.name, fullName: r.fullName, nameEn: r.nameEn })));
 
 console.log('build-static: latest scores, screener columns …');
 const scores = latestScores();
@@ -254,42 +223,12 @@ write('scores-min.json', Object.fromEntries(scores.map((s) => [s.cik, scoreBadge
 const screenCols = screenColumns(screenRows(scores, byCik, market?.byTicker || null));
 write('screen.json', screenCols.screen);
 write('screen-history.json', screenCols.history);
-write('universe.json', { updatedAt: universe.updatedAt, datasets: universe.datasets, companies: universe.companies });
-// the SIC / filer-status counts of the browse pages and the screener's
-// pickers, so those need not load the 2 MB universe
-write('browse.json', { updatedAt: universe.updatedAt, datasets: universe.datasets, sic: sicCounts(universe.companies), filer: filerCounts(universe.companies) });
+write('universe.json', { updatedAt: universe.updatedAt, companies: universe.companies });
+// the industry counts of the browse page and the screener's pickers, so
+// those need not load the universe
+write('browse.json', { updatedAt: universe.updatedAt, industry: industryCounts(universe.companies) });
 write('tvsymbols.json', Object.fromEntries(Object.entries(market?.byTicker || {}).map(([t, r]) => [t, { symbol: r.tv, exchange: r.exchange || null }])));
 
-// ETF list and the popular ETFs' holdings (from the caches; fetched when
-// SEC_USER_AGENT allows - a new N-PORT quarter means one big XML per ETF
-// from EDGAR, which is where a build spends minutes when it does). The
-// list is one index, each ETF's holdings its own (etf-VOO.json): the browse
-// page loads the one it shows
-let etfs = { updatedAt: null, popular: POPULAR_ETFS, etfs: [], holdings: [] };
-try {
-  if (!client) throw new Error('no SEC client');
-  const { etfList, etfHoldings } = await import('../lib/etf.js');
-  console.log('build-static: ETF list …');
-  const list = await etfList(client);
-  etfs.updatedAt = list.updatedAt;
-  etfs.etfs = list.etfs;
-  for (const t of POPULAR_ETFS) {
-    const t0 = Date.now();
-    try {
-      write(`etf-${t}.json`, await etfHoldings(client, t));
-      etfs.holdings.push(t);
-      const ms = Date.now() - t0;
-      if (ms > 1000) console.log(`build-static: ETF ${t} holdings (N-PORT from EDGAR) ${(ms / 1000).toFixed(1)} s`);
-    } catch (err) {
-      console.warn(`build-static: ETF ${t}: ${err.message}`);
-    }
-  }
-} catch (err) {
-  console.warn(`build-static: ETF lists skipped (${err.message})`);
-}
-write('etfs.json', etfs);
-
-write('documentation.json', JSON.parse(fs.readFileSync(path.join(store.file, 'documentation.json'), 'utf8')));
 write(
   'meta.json',
   {
@@ -297,6 +236,7 @@ write(
     filings: store.filingCount(),
     scores: scores.length,
     companies: Object.keys(companies).length,
+    withReports,
     scrapeVersion: SCRAPE_VERSION,
     scoreVersion: SCORE_VERSION,
     market: { count: market?.count ?? 0, updatedAt: market?.updatedAt ?? null, refreshing: false },

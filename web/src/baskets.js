@@ -4,9 +4,9 @@
 // weight is a percentage (the page keeps them summing to 100; 0 leaves the
 // stock out of the index while keeping it in the list).
 // prune: drop delisted names as soon as the first price data shows which
-// ones they are (set when a basket is copied from an ETF / screener / list).
+// ones they are (set when a basket is copied from the screener / a list).
 // source: where the basket was copied from and can be resynced from -
-//   { type: 'etf', ticker } | { type: 'screen', params, n, label } | { type: 'watch', group } | null
+//   { type: 'screen', params, n, label } | { type: 'watch', group } | null
 // sync: { at, asOf, sourceName, added, removed, changed } of the last resync.
 // excluded: source names the user removed, [{ ticker, name, cik, sourceWeight, at }] (a resync will not bring them back).
 // per constituent: origin 'source' (came from the source) | 'manual' (added by hand);
@@ -15,8 +15,8 @@
 //   lists it but it is kept because of a manual weight.
 import { reactive, watch } from 'vue';
 
-const KEY = 'stockscan.baskets';
-const KEY_CURRENT = 'stockscan.basket';
+const KEY = 'stockscan-tw.baskets';
+const KEY_CURRENT = 'stockscan-tw.basket';
 
 function load(key, fallback) {
   try {

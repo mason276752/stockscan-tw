@@ -12,15 +12,15 @@
 //     the cached copy as the offline fallback
 // Everything under data/store, data/zdict and the finished-year bars is left
 // to the app so it is not stored twice.
-const SHELL = 'stockscan-shell-v1';
-const FALLBACK = 'stockscan-fallback-v1';
+const SHELL = 'sstw-shell-v1';
+const FALLBACK = 'sstw-fallback-v1';
 
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (e) => {
   e.waitUntil(
     caches
       .keys()
-      .then((keys) => Promise.all(keys.filter((k) => k.startsWith('stockscan-') && k !== SHELL && k !== FALLBACK && !k.startsWith('stockscan-store')).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(keys.filter((k) => k.startsWith('sstw-') && k !== SHELL && k !== FALLBACK && !k.startsWith('sstw-store')).map((k) => caches.delete(k))))
       .then(() => self.clients.claim()),
   );
 });

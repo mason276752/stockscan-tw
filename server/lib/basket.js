@@ -3,6 +3,8 @@
 // the static site (which computes the same in the browser).
 
 export const RANGES = { '1y': 1, '3y': 3, '5y': 5, '10y': 10, max: 10 };
+// the default benchmark: 元大台灣50 (0050), the TWSE large-cap ETF
+export const BENCHMARK = '0050';
 
 function daysBefore(date, n) {
   const d = new Date(`${date}T00:00:00Z`);
@@ -213,9 +215,8 @@ function basketResult({ wanted, range, rebalance }, out, { partial = false, done
   const members = out.filter((m) => m && !m.bench);
   const bench = out.find((m) => m && m.bench) || null;
   const series = basketSeries(members, { range, rebalance });
-  // EDGAR's ticker table is the other delisting signal: a name whose prices
-  // still come in but that left the table (taken private, deregistered,
-  // renamed) is flagged too, with the new ticker when the company lives on
+  // TWSE's listed-company table is the other delisting signal: a name whose
+  // prices still come in but that left the table is flagged too
   for (const c of series.constituents) {
     const l = listingOf(c.symbol, wanted.find((w) => w.ticker === c.symbol)?.cik);
     if (!l) continue;

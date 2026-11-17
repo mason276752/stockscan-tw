@@ -4,31 +4,25 @@
 
 import { store } from './store.js';
 import { reclassify } from './statementTypes.js';
-import { fiscalLabel } from './filings.js';
+import { filingRecord, parseAccession, byPeriodDesc } from './filings.js';
 import { SCORE_VERSION, CATEGORIES, ITEMS, scoreValues, singleFilingInputs, BALANCE_AMOUNTS, FLOW_AMOUNTS, AMOUNT_FIELDS, scoreFiling, scoreFilingOf } from './scoreModel.js';
 
 export { SCORE_VERSION, CATEGORIES, ITEMS, scoreValues, singleFilingInputs, BALANCE_AMOUNTS, FLOW_AMOUNTS, AMOUNT_FIELDS, scoreFiling, scoreFilingOf };
 
-// A company's saved filings around `reportDate` as scoreFilingOf wants them
-// (the fiscal labels come from the saved headers, relabelled from the
-// company's fiscal year end when its submissions record is on disk - as the
-// static build does), from the store alone so scoring never waits on SEC.
-// Scoring one filing needs at most the year's 10-Qs and the quarter before.
+// A company's saved reports around `reportDate` as scoreFilingOf wants them,
+// from the store alone so scoring never waits on MOPS. Scoring one report
+// needs at most the year's quarterly reports and the quarter before.
 const WINDOW_DAYS = 480;
 function savedCompany(cik, reportDate) {
-  const fye = store.getDoc(`companies/${String(cik).padStart(10, '0')}.json`)?.value?.fiscalYearEnd || null;
   const from = new Date(new Date(reportDate).getTime() - WINDOW_DAYS * 86400000).toISOString().slice(0, 10);
   const filings = [];
   for (const r of store.filingIndex(cik)) {
     if (!r.report_date || r.report_date < from || r.report_date > reportDate) continue;
-    const h = store.filingHeader(r.accession);
-    if (!h) continue;
-    const form = h.form || r.form || '';
-    const end = h.periodEnd || r.report_date;
-    const label = fye ? fiscalLabel(form, end, fye) : { fiscalYear: h.fiscalYear ? Number(h.fiscalYear) : null, fiscalPeriod: h.fiscalPeriod || null };
-    filings.push({ accession: r.accession, cik: Number(cik), form, filingDate: h.filingDate || null, reportDate: end, ...label });
+    const p = parseAccession(r.accession);
+    if (!p) continue;
+    filings.push(filingRecord(p.code, p.year, p.quarter, { filingDate: store.filingHeader(r.accession)?.filingDate }));
   }
-  filings.sort((a, b) => (a.filingDate < b.filingDate ? 1 : a.filingDate > b.filingDate ? -1 : 0));
+  filings.sort(byPeriodDesc);
   return { cik: Number(cik), filings };
 }
 
@@ -86,7 +80,7 @@ export async function scoreUnscored({ budgetMs = 50, log = () => {} } = {}) {
 // accession so a refresh only decodes what is new.
 // a company's scores newest first -> the newest with `prev` / `yoy` attached
 export function withHistory(scores) {
-  const hist = scores.filter((x) => x && !/\/A$/i.test(x.form || ''));
+  const hist = scores.filter(Boolean);
   if (!hist.length) return null;
   const cur = hist[0];
   const prev = hist[1] || null;
@@ -123,7 +117,7 @@ export function latestScores() {
 
 // Latest saved filing of a company and its score (null when nothing is saved yet).
 export async function latestScore(cik) {
-  const rows = store.filingIndex(cik).filter((r) => r.report_date && !/\/A$/i.test(r.form || ''));
+  const rows = store.filingIndex(cik).filter((r) => r.report_date);
   if (!rows.length) return null;
   rows.sort((a, b) => (a.report_date < b.report_date ? 1 : a.report_date > b.report_date ? -1 : 0));
   return scoreAccession(rows[0].accession);

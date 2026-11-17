@@ -1,34 +1,29 @@
 // Local persistence, laid out so the data can live in git (many small
 // immutable files, no file near GitHub's 100 MB limit, no LFS):
 //
-//   data/store/filings/<cik>/<accession>__<period end>__<form>__v<parser>.json.zst
-//       the parsed statements of one filing (zstd JSON, dictionary-compressed). A filed document
-//       never changes, so a file is written once and kept; a parser version
-//       bump deletes it and it is re-fetched. The four primary statements
-//       are not stored twice: `statements` is rebuilt from `allStatements`.
-//   data/store/scores/<cik>/<accession>__<period end>__v<score version>.json.zst
-//       the score of one filing
-//   data/store/documentation.json
-//       SEC's definition of every standard concept seen (us-gaap: … ), one
-//       copy instead of one per filing (a fifth of a filing's bytes)
-//   data/store/universe.json
-//       every SEC filer with industry (SIC), filer status and public float,
-//       from SEC's quarterly datasets (rebuilt weekly): the browse pages
-//   data/store/companies/<CIK padded>.json
-//       the company's EDGAR filing list (submissions, trimmed to 10-K/10-Q…):
-//       what the filing picker shows and what the crawler compares the store
-//       against - in git, so a fresh clone opens every company and resumes
-//       the crawl without a single request to SEC
+//   data/store/filings/<code>/<code>-<year>Q<q>__<period end>__<form>__v<parser>.json.zst
+//       the parsed statements of one MOPS report (zstd JSON, dictionary-
+//       compressed). A filed report never changes, so a file is written once
+//       and kept; a parser version bump deletes it and it is fetched again.
+//       The four primary statements are not stored twice: `statements` is
+//       rebuilt from `allStatements`.
+//   data/store/scores/<code>/<code>-<year>Q<q>__<period end>__v<score version>.json.zst
+//       the score of one report
+//   data/store/listed.json
+//       the TWSE listed-company table (twse.js): the universe
+//   data/store/kv/mops/missing.json
+//       the reports MOPS answered "檔案不存在" for, so a CI runner does not
+//       ask again (companies.js)
 //   data/cache.sqlite   (not for git)
-//       kv cache: ticker table, market snapshot, universe, ETF lists …
+//       kv cache: market snapshot, latest quarters, crawl bookkeeping …
 //
-// Everything the store knows about which files exist is read from the file
-// names at startup (no index file to drift). Writes are atomic (temp + rename).
-// The old single-file SQLite store (data/stockscan.sqlite) is migrated on
-// first start when the directory is still empty.
+// `cik` throughout is the TWSE company code as a number (2330); codes have
+// no leading zero. Everything the store knows about which files exist is
+// read from the file names at startup (no index file to drift). Writes are
+// atomic (temp + rename).
 // Locations: STOCKSCAN_STORE (default <repo>/data/store), STOCKSCAN_CACHE
-// (default <repo>/data/cache.sqlite), STOCKSCAN_DB (the legacy SQLite to
-// migrate) - relative to the repo, not the working directory.
+// (default <repo>/data/cache.sqlite) - relative to the repo, not the working
+// directory.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -38,46 +33,39 @@ import { fileURLToPath } from 'node:url';
 import { slim, fatten } from './storeFormat.js';
 
 // Files are zstd with a dictionary trained on this kind of JSON (server/data/
-// zdict, node server/tools/train-zdict.mjs): a filing is a third smaller than
-// with brotli, a score a third of the size, and decoding is faster. Files
-// written before that (.json.br, brotli) still read; they are rewritten as
-// .zst in the background after startup. A dictionary is frozen once used.
+// zdict, node server/tools/train-zdict.mjs): a report is about half the size
+// it is with plain zstd. A dictionary is frozen once used.
 const EXT = '.json.zst';
 // paths default to the repo's data/ whatever the working directory is
 const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const DATA = path.join(REPO, 'data');
 const ZDICT_DIR = path.join(REPO, 'server', 'data', 'zdict');
-const DICTS = { filings: fs.readFileSync(path.join(ZDICT_DIR, 'filings-v1.zdict')), scores: fs.readFileSync(path.join(ZDICT_DIR, 'scores-v1.zdict')) };
-const ZSTD = (kind) => ({ dictionary: DICTS[kind], params: { [zlib.constants.ZSTD_c_compressionLevel]: 19 } });
-const pack = (kind, value) => zlib.zstdCompressSync(Buffer.from(JSON.stringify(value)), ZSTD(kind));
-const unpack = (kind, buf, file) => JSON.parse((file.endsWith('.br') ? zlib.brotliDecompressSync(buf) : zlib.zstdDecompressSync(buf, { dictionary: DICTS[kind] })).toString('utf8'));
-// the legacy SQLite rows: gzip'd JSON, or plain text from even older versions
-const unpackLegacy = (col) => JSON.parse(col instanceof Uint8Array ? zlib.gunzipSync(col).toString('utf8') : col);
+// STOCKSCAN_ZDICT=off writes plain zstd: only for collecting the samples the
+// dictionaries are trained on (a throw-away store), never for the real one.
+const NO_DICT = /^(0|off|no|false)$/i.test(process.env.STOCKSCAN_ZDICT || '');
+const DICTS = NO_DICT ? {} : { filings: fs.readFileSync(path.join(ZDICT_DIR, 'filings-v1.zdict')), scores: fs.readFileSync(path.join(ZDICT_DIR, 'scores-v1.zdict')) };
+const withDict = (kind) => (DICTS[kind] ? { dictionary: DICTS[kind] } : {});
+const pack = (kind, value) => zlib.zstdCompressSync(Buffer.from(JSON.stringify(value)), { ...withDict(kind), params: { [zlib.constants.ZSTD_c_compressionLevel]: 19 } });
+const unpack = (kind, buf) => JSON.parse(zlib.zstdDecompressSync(buf, withDict(kind)).toString('utf8'));
 
 let root = null; // data/store
 let cache = null; // the kv SQLite
 
-// kv keys that also live as files in the store (see getKV): what the
-// static build needs from the network and would otherwise fetch again on
-// every CI run - the ETF list, the CUSIP table, each ETF's N-PORT filing
-// list and the parsed N-PORT documents (a filed document never changes)
-const DURABLE_KV = ['etfs', 'cusips', 'nport:', 'nport-list:'];
+// kv keys that also live as files in the store (see getKV): what a fresh
+// CI runner must not have to find out again - the reports MOPS does not have
+const DURABLE_KV = ['mops:missing'];
 const durableKV = (key) => DURABLE_KV.some((p) => (p.endsWith(':') ? key.startsWith(p) : key === p));
-// 'nport:0000036405-26-000480' -> 'kv/nport/0000036405-26-000480.json'
+// 'mops:missing' -> 'kv/mops/missing.json'
 const durableFile = (key) => `kv/${key.replace(/[^A-Za-z0-9:_.-]/g, '_').replace(/:/g, '/')}.json`;
 const filings = new Map(); // accession -> { cik, form, reportDate, version, file, bytes }
 const scores = new Map(); // accession -> { cik, reportDate, version, file }
-let docs = {}; // concept -> SEC documentation (standard concepts)
-let docsDirty = false;
-let docsTimer = null;
-
-// file name <-> record. Forms carry a slash (10-K/A): '~' in the name.
+// file name <-> record
 const safe = (s) => String(s ?? '-').replace(/\//g, '~').replace(/[^A-Za-z0-9.~-]/g, '_') || '-';
 const unsafe = (s) => (s === '-' ? null : s.replace(/~/g, '/'));
 const filingName = (accession, reportDate, form, version) => `${accession}__${safe(reportDate)}__${safe(form)}__v${version}${EXT}`;
 const scoreName = (accession, reportDate, version) => `${accession}__${safe(reportDate)}__v${version}${EXT}`;
-const FILING_RE = /^(.+?)__(.+?)__(.+?)__v(\d+)\.json\.(?:br|zst)$/;
-const SCORE_RE = /^(.+?)__(.+?)__v(\d+)\.json\.(?:br|zst)$/;
+const FILING_RE = /^(.+?)__(.+?)__(.+?)__v(\d+)\.json\.zst$/;
+const SCORE_RE = /^(.+?)__(.+?)__v(\d+)\.json\.zst$/;
 
 const dir = (kind, cik) => path.join(root, kind, String(cik));
 
@@ -117,7 +105,7 @@ function scan(kind, re, into, make) {
       const rec = make(m, cik, file);
       // two files for one accession (a crash between write and delete): keep the newest version
       const prev = into.get(rec.accession);
-      if (prev && (prev.version > rec.version || (prev.version === rec.version && prev.file.endsWith('.zst')))) {
+      if (prev && prev.version >= rec.version) {
         unlinkQuiet(file);
         continue;
       }
@@ -129,26 +117,6 @@ function scan(kind, re, into, make) {
 const scanFilings = () =>
   scan('filings', FILING_RE, filings, (m, cik, file) => ({ accession: m[1], cik, reportDate: unsafe(m[2]), form: unsafe(m[3]), version: Number(m[4]), file, bytes: fs.statSync(file).size }));
 const scanScores = () => scan('scores', SCORE_RE, scores, (m, cik, file) => ({ accession: m[1], cik, reportDate: unsafe(m[2]), version: Number(m[3]), file }));
-
-function loadDocs() {
-  try {
-    docs = JSON.parse(fs.readFileSync(path.join(root, 'documentation.json'), 'utf8')) || {};
-  } catch {
-    docs = {};
-  }
-}
-function flushDocs() {
-  clearTimeout(docsTimer);
-  docsTimer = null;
-  if (!docsDirty || !root) return;
-  docsDirty = false;
-  const sorted = Object.fromEntries(Object.keys(docs).sort().map((k) => [k, docs[k]]));
-  writeAtomic(path.join(root, 'documentation.json'), JSON.stringify(sorted, null, 1));
-}
-function scheduleDocs() {
-  docsDirty = true;
-  if (!docsTimer) docsTimer = setTimeout(flushDocs, 5000).unref();
-}
 
 export function openStore(storeDir = process.env.STOCKSCAN_STORE || path.join(DATA, 'store'), cacheFile = process.env.STOCKSCAN_CACHE || path.join(DATA, 'cache.sqlite')) {
   root = storeDir;
@@ -164,156 +132,10 @@ export function openStore(storeDir = process.env.STOCKSCAN_STORE || path.join(DA
       updated_at INTEGER NOT NULL
     );
   `);
-  loadDocs();
   scanFilings();
   scanScores();
-  migrateLegacy(process.env.STOCKSCAN_DB || path.join(DATA, 'stockscan.sqlite'));
-  migrateSubmissions();
-  migrateUniverse();
-  compactCache();
-  process.on('exit', flushDocs);
-  setTimeout(recompress, 20_000).unref();
-  return root;
-}
-
-// files still in the brotli format: rewrite them as zstd one at a time,
-// spaced out so the server stays responsive (~0.1 s each, ~15 min for 10k)
-function recompress() {
-  const todo = [
-    ...[...filings.values()].filter((f) => f.file.endsWith('.br')).map((f) => ['filings', f]),
-    ...[...scores.values()].filter((f) => f.file.endsWith('.br')).map((f) => ['scores', f]),
-  ];
-  if (!todo.length) return;
-  console.log(`store: ${todo.length} 個檔案從 brotli 轉成 zstd（背景進行）…`);
-  let i = 0;
-  let saved = 0;
-  const step = () => {
-    if (i >= todo.length) {
-      console.log(`store: 轉檔完成，省下 ${(saved / 1048576).toFixed(0)} MB`);
-      return;
-    }
-    const [kind, rec] = todo[i++];
-    const live = (kind === 'filings' ? filings : scores).get(rec.accession);
-    if (live === rec && fs.existsSync(rec.file)) {
-      try {
-        const value = JSON.parse(zlib.brotliDecompressSync(fs.readFileSync(rec.file)).toString('utf8'));
-        const buf = pack(kind, value);
-        const file = rec.file.replace(/\.json\.br$/, EXT);
-        writeAtomic(file, buf);
-        unlinkQuiet(rec.file);
-        saved += (rec.bytes || 0) - buf.length;
-        rec.file = file;
-        if (rec.bytes != null) rec.bytes = buf.length;
-      } catch (err) {
-        console.warn(`store: ${path.basename(rec.file)} 轉檔失敗：${err.message}`);
-      }
-    }
-    setTimeout(step, 30).unref();
-  };
-  step();
-}
-
-// filing lists saved in the kv cache by earlier versions: move them into the
-// store (they are data a clone should have, not a cache)
-let kvShrunk = false;
-function migrateSubmissions() {
-  const keys = cache.prepare("SELECT key FROM kv WHERE substr(key, 1, 12) = 'submissions:'").all().map((r) => r.key);
-  if (!keys.length) return;
-  const get = cache.prepare('SELECT json, updated_at FROM kv WHERE key = ?');
-  for (const key of keys) {
-    const row = get.get(key);
-    if (!row) continue;
-    const file = path.join(root, 'companies', `${key.slice('submissions:'.length)}.json`);
-    if (!fs.existsSync(file)) {
-      writeAtomic(file, JSON.stringify(kvUnpack(row.json)));
-      const t = new Date(row.updated_at);
-      fs.utimesSync(file, t, t); // keep the fetch time (the TTL reads mtime)
-    }
-    cache.prepare('DELETE FROM kv WHERE key = ?').run(key);
-  }
-  kvShrunk = true;
-  console.log(`store: ${keys.length} 家公司的申報清單從快取搬到 ${root}/companies/`);
-}
-// the SIC / filer universe likewise (rebuilt weekly from SEC's datasets; a
-// clone should not have to wait minutes for it)
-function migrateUniverse() {
-  const row = cache.prepare("SELECT json, updated_at FROM kv WHERE key = 'universe'").get();
-  if (!row) return;
-  const file = path.join(root, 'universe.json');
-  if (!fs.existsSync(file)) {
-    writeAtomic(file, JSON.stringify(kvUnpack(row.json)));
-    const t = new Date(row.updated_at);
-    fs.utimesSync(file, t, t);
-  }
-  cache.prepare("DELETE FROM kv WHERE key = 'universe'").run();
-  kvShrunk = true;
-}
-
-// Housekeeping for the kv cache at startup: rows still stored as plain text
-// (first migration pass) get packed and the file is shrunk.
-function compactCache() {
-  const stale = 0;
-  const text = cache.prepare("SELECT key FROM kv WHERE typeof(json) = 'text'").all().map((r) => r.key);
-  if (text.length) {
-    const get = cache.prepare('SELECT json FROM kv WHERE key = ?');
-    const put = cache.prepare('UPDATE kv SET json = ? WHERE key = ?');
-    for (let i = 0; i < text.length; i += 200) {
-      cache.exec('BEGIN');
-      for (const key of text.slice(i, i + 200)) {
-        const row = get.get(key);
-        if (row && typeof row.json === 'string') put.run(kvPack(JSON.parse(row.json)), key);
-      }
-      cache.exec('COMMIT');
-    }
-  }
-  if (stale || text.length || kvShrunk) {
-    cache.exec('VACUUM');
-    console.log(`store: 快取整理：壓縮 ${text.length} 筆純文字列`);
-  }
   cache.exec('PRAGMA wal_checkpoint(TRUNCATE)'); // fold the WAL back into the file so it does not sit at its high-water mark
-}
-
-// The previous single-file SQLite store: copy everything over once (the
-// store directory is empty, the old file exists), then leave the old file
-// alone for the user to delete.
-function migrateLegacy(file) {
-  if (filings.size || !fs.existsSync(file)) return;
-  let db;
-  try {
-    db = new DatabaseSync(file, { readOnly: true });
-    const tables = new Set(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((r) => r.name));
-    if (!tables.has('filings')) return;
-    console.log(`store: 從舊的 ${file} 搬到 ${root}/ …`);
-    let n = 0;
-    for (const r of db.prepare('SELECT accession, cik, version, fetched_at, json FROM filings').iterate()) {
-      const data = unpackLegacy(r.json);
-      store.putFiling(r.accession, r.cik, data, r.version, r.fetched_at);
-      if (++n % 1000 === 0) console.log(`store: 財報 ${n} 份…`);
-    }
-    let s = 0;
-    if (tables.has('scores')) {
-      for (const r of db.prepare('SELECT accession, cik, report_date, version, json FROM scores').iterate()) {
-        store.putScore(r.accession, r.cik, r.report_date, r.version, unpackLegacy(r.json));
-        s++;
-      }
-    }
-    let k = 0;
-    if (tables.has('kv')) {
-      const put = cache.prepare('INSERT OR REPLACE INTO kv (key, json, updated_at) VALUES (?, ?, ?)');
-      cache.exec('BEGIN');
-      for (const r of db.prepare('SELECT key, json, updated_at FROM kv').iterate()) {
-        put.run(r.key, kvPack(unpackLegacy(r.json)), r.updated_at);
-        k++;
-      }
-      cache.exec('COMMIT');
-    }
-    flushDocs();
-    console.log(`store: 搬完 ${n} 份財報、${s} 筆評分、${k} 筆快取；${file} 可以刪掉了`);
-  } catch (err) {
-    console.warn(`store: 舊資料庫搬移失敗：${err.message}`);
-  } finally {
-    db?.close();
-  }
+  return root;
 }
 
 // files written by another parser version are thrown away (rebuilt on demand)
@@ -333,7 +155,7 @@ const need = () => {
   if (!root) throw new Error('store not opened');
   return root;
 };
-// the kv cache is brotli'd too (fast setting: the market snapshot is rewritten every half hour)
+// the kv cache is brotli'd (fast setting: the market snapshot is rewritten every half hour)
 const KV_BROTLI = { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 5 } };
 const kvPack = (value) => zlib.brotliCompressSync(Buffer.from(JSON.stringify(value)), KV_BROTLI);
 const kvUnpack = (col) => JSON.parse(col instanceof Uint8Array ? zlib.brotliDecompressSync(col).toString('utf8') : col);
@@ -348,7 +170,7 @@ export const store = {
     const f = filings.get(accession);
     if (!f) return null;
     try {
-      return fatten(unpack('filings', fs.readFileSync(f.file), f.file).data, docs);
+      return fatten(unpack('filings', fs.readFileSync(f.file)).data);
     } catch (err) {
       console.warn(`store: ${path.basename(f.file)} unreadable (${err.message}), dropped`);
       unlinkQuiet(f.file);
@@ -362,7 +184,7 @@ export const store = {
     const f = filings.get(accession);
     if (!f) return null;
     try {
-      return unpack('filings', fs.readFileSync(f.file), f.file).data?.filing || null;
+      return unpack('filings', fs.readFileSync(f.file)).data?.filing || null;
     } catch {
       return null;
     }
@@ -376,7 +198,7 @@ export const store = {
     const reportDate = result.filing?.periodEnd ?? null;
     const form = result.filing?.form ?? null;
     const file = path.join(dir('filings', cik), filingName(accession, reportDate, form, version));
-    const buf = pack('filings', { accession, cik, form, reportDate, version, fetchedAt, data: slim(result, docs, scheduleDocs) });
+    const buf = pack('filings', { accession, cik, form, reportDate, version, fetchedAt, data: slim(result) });
     writeAtomic(file, buf);
     const prev = filings.get(accession);
     if (prev && prev.file !== file) unlinkQuiet(prev.file);
@@ -407,7 +229,7 @@ export const store = {
     return out;
   },
 
-  // small plain-JSON documents in the store (companies/<cik>.json …): git-
+  // small plain-JSON documents in the store (listed.json …): git-
   // friendly, with the write time so callers can apply their own TTL
   getDoc(name) {
     need();
@@ -509,7 +331,7 @@ export const store = {
     const s = scores.get(accession);
     if (!s) return null;
     try {
-      return unpack('scores', fs.readFileSync(s.file), s.file).score;
+      return unpack('scores', fs.readFileSync(s.file)).score;
     } catch {
       unlinkQuiet(s.file);
       scores.delete(accession);
@@ -526,7 +348,7 @@ export const store = {
     return out;
   },
   // drop every saved filing / score of companies outside `ciks` (delisted
-  // filers: nothing to buy, so nothing to keep) -> { companies, filings, scores }
+  // companies: nothing to buy, so nothing to keep) -> { companies, filings, scores }
   purgeExcept(ciks) {
     need();
     const keep = new Set(ciks.map(Number));

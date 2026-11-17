@@ -144,7 +144,7 @@ const tipStyle = computed(() => {
     <div class="panel head">
       <div>
         <div class="price">
-          <span class="big">{{ price == null ? '—' : `$${money(price)}` }}</span>
+          <span class="big">{{ price == null ? '—' : money(price) }}</span> <span class="muted">{{ data.quote?.currency || 'TWD' }}</span>
           <span v-if="typedPrice != null" class="muted small">{{ t('vp.customPrice') }}</span>
           <span v-else-if="price != null" class="muted small">{{ t('vp.closeOf', { basis: basisLabel, date: basisDate }) }} · {{ data.quote?.source || data.priceHistory?.source }}</span>
           <span v-else class="error-inline">{{ t('vp.noPrice', { basis: basisLabel, err: basis === 'now' && data.quote?.error ? `: ${data.quote.error}` : '' }) }}</span>

@@ -1,92 +1,78 @@
-// Background crawl of the latest 10-K / 10-Q filings of every company that
-// has a ticker, so the report page opens instantly for any of them and the
-// screener can compare each company with its previous period and the same
-// period a year earlier.
+// Background fetch of every listed company's reports from MOPS, so a report
+// page opens instantly and the screener / static site have them.
 //
-//   1. sweep   walk the browse universe (largest public float first), fetch
-//              each company's filing list and save its newest DEPTH filings;
-//              companies checked in the last week are skipped, so a restart
-//              resumes where it left off
-//   2. watch   poll EDGAR's daily form index for new 10-K / 10-Q / 20-F /
-//              40-F from those companies and save them as they appear - also
-//              every half hour in the middle of a sweep, so today's filings
-//              never wait for the sweep to finish
+// A pass (runOnce) plans every report wanted - each listed company's newest
+// DEPTH quarters, counted back from its latest report on TWSE's table - that
+// is neither saved nor known to be missing, newest quarter first across all
+// companies (a short pass gets everyone's latest report before anyone's
+// older ones; the biggest companies first within a quarter), and fetches
+// them a few at a time until the plan or the time budget runs out. So a new
+// listing is picked up by the first pass after it appears on TWSE's table,
+// a new quarter by the first pass after TWSE lists it, and a fresh store
+// fills up over a few passes.
 //
-// Everything runs at low priority: it waits whenever the user is asking for
-// something, and it yields to the neighbour prefetcher.
+// The server runs a pass every half hour at low priority (it waits whenever
+// the user is asking for something); the scheduled CI job runs one per run
+// with a budget (npm run fetch:new).
 
 import { store } from './store.js';
-import { getCompany, tickerTable, DEFAULT_FORMS } from './edgar.js';
+import { listedTable, latestPeriods, refreshListed, purgeDelisted } from './twse.js';
+import { newestPeriod, candidatePeriods, knownMissing, companyRecord } from './companies.js';
+import { filingRecord } from './filings.js';
 import { ensureStored } from './scrape.js';
-import { getUniverse } from './universe.js';
 import { scoreAccession } from './score.js';
 
-const CHECK_TTL = 7 * 24 * 3600 * 1000; // re-sweep a company after this long
-const DEPTH = 5; // filings per company: the latest, the previous, and the same quarter a year ago with room to spare
-const CHECKED_KEY = `crawl:checked:d${DEPTH}`; // a new depth starts the sweep over
-const WATCH_EVERY = 30 * 60 * 1000; // daily-index poll interval
-const WATCH_DAYS = 7; // how far back the daily index is read on (re)start
-const MAX_FAILS = 3; // give up on a filing that keeps failing to parse
-const LOG_EVERY = 10_000; // progress line during the sweep
-// Companies crawled at the same time. One filing is ~8 short SEC requests
-// done one after another, so a single lane spends most of its time waiting
-// on the network; a few lanes fill the client's 10 req/s allowance instead.
-const LANES = Math.max(1, Number(process.env.STOCKSCAN_CRAWL_PARALLEL) || 4);
-const DAILY_INDEX = 'https://www.sec.gov/Archives/edgar/daily-index';
+// quarters per company: three years - the latest, the one before, the same
+// quarter a year earlier, whole years for Q4 and the yearly indicators
+export const DEPTH = Math.max(1, Number(process.env.STOCKSCAN_DEPTH) || 12);
+const PASS_EVERY = 30 * 60 * 1000;
+const LISTED_EVERY = 24 * 3600 * 1000;
+const MAX_FAILS = 3; // give up on a report that keeps failing to parse
+const LOG_EVERY = 60_000;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const FORMS = new Set(DEFAULT_FORMS.map((f) => f.toUpperCase()));
+const key = (p) => p.year * 10 + p.quarter;
 
-// Today's date in EDGAR's time zone, as YYYY-MM-DD.
-function edgarDay(offsetDays = 0) {
-  const d = new Date(Date.now() - offsetDays * 86_400_000);
-  return d.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
-}
-
-function dailyIndexUrl(day) {
-  const [y, m] = day.split('-').map(Number);
-  return `${DAILY_INDEX}/${y}/QTR${Math.ceil(m / 3)}/form.${day.replace(/-/g, '')}.idx`;
-}
-
-// form.YYYYMMDD.idx: a header, a dashed line, then
-// "Form Type   Company Name   CIK   Date Filed   File Name" separated by runs of spaces.
-export function parseDailyIndex(text) {
-  const out = [];
-  let started = false;
-  for (const line of text.split('\n')) {
-    if (!started) {
-      if (/^-{10,}/.test(line)) started = true;
-      continue;
-    }
-    const m = /^(\S+)\s+(.*?)\s{2,}(\d+)\s+(\d{8})\s+(edgar\/data\/\d+\/(\d{10}-\d{2}-\d{6})\.txt)\s*$/.exec(line);
-    if (!m) continue;
-    out.push({ form: m[1].toUpperCase(), name: m[2].trim(), cik: Number(m[3]), filed: m[4], accession: m[6] });
+// The reports a pass wants, in the order to fetch them.
+export function planPass(listed, latest, { depth = DEPTH, fails = {} } = {}) {
+  const fallback = newestPeriod();
+  const rounds = [];
+  for (const c of [...listed].sort((a, b) => (b.capital || 0) - (a.capital || 0))) {
+    if (c.industry === '91') continue; // depositary receipts: no Taiwan IFRS reports
+    const lp = latest[c.ticker];
+    const top = lp || fallback;
+    const periods = candidatePeriods(top, top.year - Math.ceil(depth / 4) - 1).slice(0, depth);
+    periods.forEach((p, i) => {
+      const filing = filingRecord(c.ticker, p.year, p.quarter, { reportId: c.reportType });
+      if (store.hasFiling(filing.accession) || (fails[filing.accession] || 0) >= MAX_FAILS) return;
+      // a quarter TWSE says is out is asked for even when MOPS said no lately
+      if (knownMissing(filing.accession) && !(lp && key(p) === key(lp))) return;
+      (rounds[i] ||= []).push({ row: c, filing });
+    });
   }
-  return out;
+  return rounds.flat();
 }
 
 export function createCrawler(client, { prefetcher, enabled = true } = {}) {
   const low = client.lowPriority();
   const state = {
     enabled,
-    phase: 'waiting', // waiting | sweep | watch
+    phase: 'waiting', // waiting | pass | idle
     round: 0,
     total: 0,
     position: 0,
     saved: 0,
-    skipped: 0,
+    missing: 0,
     failed: 0,
-    done: 0, // companies whose latest filing is on disk (this sweep)
-    current: null, // the filings being fetched right now
-    lanes: LANES,
-    startedAt: null,
-    lastWatch: null,
-    watched: 0, // filings picked up from the daily index
+    current: null,
+    lanes: client.parallel || 4,
     depth: DEPTH,
-    watchLog: [], // the last new filings picked up by the daily index
+    startedAt: null,
+    lastPass: null,
+    log: [], // the last reports saved
   };
   const fails = store.getKV('crawl:fails')?.value || {};
-  const inFlight = new Set(); // one label per lane, shown in the status line
+  const inFlight = new Set();
   const setCurrent = () => (state.current = inFlight.size ? [...inFlight].join(', ') : null);
 
   // wait while the user is active or the neighbour prefetcher has work
@@ -94,182 +80,86 @@ export function createCrawler(client, { prefetcher, enabled = true } = {}) {
     while (!client.idle || prefetcher?.status().queued || prefetcher?.status().current) await sleep(1000);
   }
 
-  // score saved filings (a quarter's score needs the quarter before it, so
-  // this runs once a company's batch is on disk; one scored without a
-  // neighbour earlier is redone now that more may be saved)
-  async function scoreSaved(filings) {
-    for (const f of filings) {
-      if (!store.hasFiling(f.accession)) continue;
-      try {
-        await scoreAccession(f.accession, { redoPartial: true });
-      } catch (err) {
-        console.warn(`score ${f.accession}: ${err.message}`);
-      }
-    }
-  }
+  const n = (x) => x.toLocaleString('en-US');
+  const progress = () =>
+    console.log(`crawl: 第 ${state.round} 輪 ${n(state.position)} / ${n(state.total)}，新存 ${n(state.saved)}、MOPS 沒有 ${n(state.missing)}、失敗 ${n(state.failed)}${state.current ? `，目前 ${state.current}` : ''}`);
 
-  async function saveLatest(company, filing) {
-    if (!filing || store.hasFiling(filing.accession)) return false;
-    if ((fails[filing.accession] || 0) >= MAX_FAILS) return false;
-    const label = `${company.tickers?.[0] || company.cik} ${filing.form} ${filing.fiscalYear} ${filing.fiscalPeriod}`;
-    inFlight.add(label);
-    setCurrent();
-    try {
-      await ensureStored(low, filing, company);
-      state.saved++;
-      return true;
-    } catch (err) {
-      state.failed++;
-      fails[filing.accession] = (fails[filing.accession] || 0) + 1;
-      store.putKV('crawl:fails', fails);
-      console.warn(`crawl ${filing.accession} (${company.name}) failed: ${err.message}`);
-      return false;
-    } finally {
-      inFlight.delete(label);
-      setCurrent();
-    }
-  }
-
-  async function sweep() {
-    state.phase = 'sweep';
+  // one pass; budgetMs = 0: until the plan is done
+  async function runOnce({ budgetMs = 0, depth = DEPTH } = {}) {
+    state.phase = 'pass';
     state.round++;
-    const u = await getUniverse(client, { priority: 'low' });
-    // the universe is rebuilt weekly; the ticker table daily - a company that
-    // was delisted in between is skipped (nothing to buy, nothing to fetch)
-    const listed = new Set((await tickerTable(client)).map((t) => t.cik));
-    const targets = u.companies.filter((c) => c.ticker && listed.has(c.cik)); // already sorted by public float, largest first
-    const checked = store.getKV(CHECKED_KEY)?.value || {};
-    state.total = targets.length;
-    state.position = 0;
-    state.done = 0;
-    const timer = setInterval(logProgress, LOG_EVERY);
-    let next = 0; // index of the next company to hand to a lane
-    let watching = null; // the daily-index poll in progress (the lanes wait for it)
+    Object.assign(state, { position: 0, saved: 0, missing: 0, failed: 0 });
+    const listed = await listedTable(client);
+    let latest = {};
+    try {
+      latest = await latestPeriods(client);
+    } catch (err) {
+      console.warn(`crawl: TWSE latest quarters unavailable (${err.message}) - using the calendar`);
+    }
+    const todo = planPass(listed, latest, { depth, fails });
+    state.total = todo.length;
+    const deadline = budgetMs > 0 ? Date.now() + budgetMs : Infinity;
+    const touched = new Set();
+    const timer = setInterval(progress, LOG_EVERY);
+    let next = 0;
     const lane = async () => {
-      for (;;) {
-        const c = targets[next++];
-        if (!c) return;
+      while (next < todo.length && Date.now() < deadline) {
+        const { row, filing } = todo[next++];
         state.position++;
-        if (checked[c.cik] && Date.now() - Date.parse(checked[c.cik]) < CHECK_TTL) {
-          state.done++;
-          continue;
-        }
         await yieldToUser();
-        // today's filings must not wait for a multi-hour sweep
-        if (!state.lastWatch || Date.now() - Date.parse(state.lastWatch) > WATCH_EVERY) {
-          watching ??= watch()
-            .catch((err) => console.warn(`crawl watch failed: ${err.message}`))
-            .finally(() => {
-              watching = null;
-              state.phase = 'sweep';
-            });
-          await watching;
-        }
+        if (store.hasFiling(filing.accession)) continue;
+        const label = `${row.ticker} ${filing.fiscalYear} ${filing.fiscalPeriod}`;
+        inFlight.add(label);
+        setCurrent();
         try {
-          const company = await getCompany(low, String(c.cik));
-          // the newest DEPTH originals (amendments rarely carry full statements)
-          const wanted = company.filings.filter((f) => !/\/A$/i.test(f.form || '')).slice(0, DEPTH);
-          let had = 0;
-          for (const filing of wanted) {
-            if (store.hasFiling(filing.accession)) had++;
-            else if (await saveLatest(company, filing)) had++;
-            else state.skipped++;
+          if (await ensureStored(low, filing, companyRecord(row, []))) {
+            state.saved++;
+            touched.add(row.cik);
+            state.log.unshift({ at: new Date().toISOString(), ticker: row.ticker, name: row.name, cik: row.cik, form: filing.form, fiscalYear: filing.fiscalYear, fiscalPeriod: filing.fiscalPeriod });
+            state.log.length = Math.min(state.log.length, 50);
+            await scoreAccession(filing.accession, { redoPartial: true }).catch((err) => console.warn(`score ${filing.accession}: ${err.message}`));
           }
-          await scoreSaved(wanted);
-          if (!wanted.length || had === wanted.length) state.done++;
         } catch (err) {
-          state.failed++;
-          console.warn(`crawl ${c.ticker} (CIK ${c.cik}): ${err.message}`);
+          if (err.missing) state.missing++;
+          else {
+            state.failed++;
+            fails[filing.accession] = (fails[filing.accession] || 0) + 1;
+            store.putKV('crawl:fails', fails);
+            console.warn(`crawl ${filing.accession} (${row.name}) failed: ${err.message}`);
+          }
+        } finally {
+          inFlight.delete(label);
+          setCurrent();
         }
-        checked[c.cik] = new Date().toISOString();
-        if (state.position % 25 === 0) store.putKV(CHECKED_KEY, checked);
       }
     };
-    await Promise.all(Array.from({ length: LANES }, lane));
-    store.putKV(CHECKED_KEY, checked);
+    await Promise.all(Array.from({ length: state.lanes }, lane));
     clearInterval(timer);
-    logProgress();
-    console.log(`crawl sweep ${state.round} done: ${state.saved} saved, ${state.skipped} already had, ${state.failed} failed`);
-  }
-
-  const n = (x) => x.toLocaleString('en-US');
-  function logProgress() {
-    const remaining = state.total - state.position;
-    console.log(
-      `crawl: 已備齊 ${n(state.done)} / ${n(state.total)} 家最近 ${DEPTH} 期財報，還需處理 ${n(remaining)} 家` +
-        `（本輪新存 ${n(state.saved)}、失敗 ${n(state.failed)}）${state.current ? ` 目前 ${state.current}` : ''}`,
-    );
-  }
-
-  // New 10-K / 10-Q … in EDGAR's daily index for companies with a ticker.
-  async function watch() {
-    const before = state.phase;
-    state.phase = 'watch';
-    const tickers = await tickerTable(client);
-    const known = new Set(tickers.map((t) => t.cik));
-    const done = store.getKV('crawl:days')?.value || {}; // day -> true once a past day is fully processed
-    const today = edgarDay();
-    for (let back = WATCH_DAYS; back >= 0; back--) {
-      const day = edgarDay(back);
-      if (done[day]) continue;
-      let text;
-      try {
-        text = await low.text(dailyIndexUrl(day));
-      } catch (err) {
-        // no index for a weekend / holiday: SEC answers 404, or 403 for some paths
-        if (err.status === 404 || (err.status === 403 && day < today)) {
-          if (day < today) done[day] = true;
-          continue;
-        }
-        console.warn(`daily index ${day}: ${err.message}`);
-        continue;
-      }
-      const rows = parseDailyIndex(text).filter((r) => FORMS.has(r.form) && known.has(r.cik) && !store.hasFiling(r.accession));
-      for (const r of rows) {
-        await yieldToUser();
-        try {
-          // the company's cached filing list will not have it yet
-          const company = await getCompany(low, String(r.cik), { refresh: true });
-          const filing = company.filings.find((f) => f.accession === r.accession);
-          if (filing && (await saveLatest(company, filing))) {
-            await scoreSaved([filing]);
-            state.watched++;
-            state.watchLog.unshift({ at: new Date().toISOString(), day, ticker: company.tickers?.[0] || null, cik: company.cik, form: filing.form, fiscalYear: filing.fiscalYear, fiscalPeriod: filing.fiscalPeriod, filingDate: filing.filingDate });
-            state.watchLog.length = Math.min(state.watchLog.length, 50);
-            console.log(`crawl: 新申報 ${company.tickers?.[0] || company.cik} ${filing.form} ${filing.fiscalYear} ${filing.fiscalPeriod}（${day} 申報）已下載（已存 ${n(store.filingCount())} 份）`);
-          }
-        } catch (err) {
-          console.warn(`crawl new filing ${r.accession}: ${err.message}`);
-        }
-      }
-      if (day < today) done[day] = true;
+    // a score that had to do without a neighbouring quarter is redone now
+    // that older quarters may have arrived
+    for (const cik of touched) {
+      for (const r of store.filingIndex(cik)) await scoreAccession(r.accession, { redoPartial: true }).catch(() => {});
     }
-    for (const day of Object.keys(done)) if (day < edgarDay(WATCH_DAYS + 7)) delete done[day];
-    store.putKV('crawl:days', done);
-    state.lastWatch = new Date().toISOString();
-    state.lastWatchDay = today;
-    if (before === 'sweep') state.phase = 'sweep';
+    state.lastPass = new Date().toISOString();
+    state.phase = 'idle';
+    progress();
+    return { planned: todo.length, done: state.position, saved: state.saved, missing: state.missing, failed: state.failed, log: state.log, budgetExhausted: state.position < todo.length };
   }
 
   async function run() {
     state.startedAt = new Date().toISOString();
+    let listedAt = 0;
     for (;;) {
       try {
-        await sweep();
-      } catch (err) {
-        console.warn(`crawl sweep failed: ${err.message}`);
-        await sleep(10 * 60 * 1000);
-        continue;
-      }
-      const until = Date.now() + CHECK_TTL;
-      while (Date.now() < until) {
-        try {
-          await watch();
-        } catch (err) {
-          console.warn(`crawl watch failed: ${err.message}`);
+        if (Date.now() - listedAt > LISTED_EVERY) {
+          purgeDelisted(await refreshListed(client));
+          listedAt = Date.now();
         }
-        await sleep(WATCH_EVERY);
+        await runOnce();
+      } catch (err) {
+        console.warn(`crawl pass failed: ${err.message}`);
       }
+      await sleep(PASS_EVERY);
     }
   }
 
@@ -277,12 +167,7 @@ export function createCrawler(client, { prefetcher, enabled = true } = {}) {
     start() {
       if (enabled) run();
     },
-    // one pass over the daily index (the last WATCH_DAYS days), then stop:
-    // for a scheduled job that tops the store up with today's filings
-    async watchOnce() {
-      await watch();
-      return { watched: state.watched, failed: state.failed, log: state.watchLog };
-    },
+    runOnce,
     status: () => ({ ...state }),
   };
 }

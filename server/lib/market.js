@@ -1,15 +1,15 @@
-// A market snapshot of every US-listed stock - price, market cap, valuation
-// multiples, volume, performance - from TradingView's screener endpoint
-// (the one tradingview.com's own stock screener uses; unofficial). One
-// request per 5,000 symbols, refreshed every half hour in the background;
-// the screener joins it to the SEC universe by ticker.
+// A market snapshot of every TWSE-listed stock - price, market cap,
+// valuation multiples, volume, performance - from TradingView's screener
+// endpoint for Taiwan (the one tradingview.com's own stock screener uses;
+// unofficial). One request, refreshed every half hour in the background;
+// the screener joins it to the listed-company table by code.
 
 import { store } from './store.js';
 import { MARKET_FIELDS } from './marketFields.js';
 
 export { MARKET_FIELDS };
 
-const URL = 'https://scanner.tradingview.com/america/scan';
+const URL = 'https://scanner.tradingview.com/taiwan/scan';
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36';
 const TTL = 30 * 60 * 1000;
 const PAGE = 5000;
@@ -46,11 +46,12 @@ export const COLUMNS = [
 let memo = null; // { at, byTicker, count, updatedAt }
 let refreshing = null;
 
-const edgarTicker = (s) => String(s).toUpperCase().replace(/\./g, '-');
-
 async function page(from) {
   const body = {
-    filter: [{ left: 'type', operation: 'in_range', right: ['stock', 'dr'] }],
+    filter: [
+      { left: 'type', operation: 'in_range', right: ['stock', 'dr'] },
+      { left: 'exchange', operation: 'equal', right: 'TWSE' },
+    ],
     options: { lang: 'en' },
     symbols: { query: { types: [] }, tickers: [] },
     columns: COLUMNS.map(([c]) => c),
@@ -72,11 +73,12 @@ async function fetchSnapshot() {
       const rec = {};
       COLUMNS.forEach(([, key], i) => (rec[key] = row.d[i] ?? null));
       if (!rec.symbol || !(rec.price > 0)) continue;
-      // one record per EDGAR ticker: the common share, not a preferred / warrant with the same root
+      // one record per company code: the common share, not a preferred share (2881A) of the same company
       if (rec.subtype && !/^(common|foreign-issuer|dr|)$/.test(rec.subtype)) continue;
-      const t = edgarTicker(rec.symbol);
+      const t = String(rec.symbol).toUpperCase();
+      if (!/^\d{4,6}$/.test(t)) continue;
       if (byTicker[t] && (byTicker[t].marketCap ?? 0) >= (rec.marketCap ?? 0)) continue;
-      rec.tv = row.s; // EXCHANGE:SYMBOL
+      rec.tv = row.s; // TWSE:2330
       byTicker[t] = rec;
     }
     if (!j.data?.length) break;

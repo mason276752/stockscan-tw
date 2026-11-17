@@ -6,7 +6,7 @@
 import { computed, ref, watch } from 'vue';
 
 export const THEMES = ['auto', 'light', 'dark'];
-const KEY = 'stockscan.theme';
+const KEY = 'stockscan-tw.theme';
 let saved = null;
 try {
   saved = localStorage.getItem(KEY);

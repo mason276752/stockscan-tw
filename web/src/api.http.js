@@ -17,7 +17,7 @@ async function post(path, body) {
 export const api = {
   isStatic: false,
   search: (q) => get(`/api/search?q=${encodeURIComponent(q)}`),
-  company: (id, { refresh = false } = {}) => get(`/api/company/${encodeURIComponent(id)}${refresh ? '?refresh=1' : ''}`),
+  company: (id) => get(`/api/company/${encodeURIComponent(id)}`),
   filing: (cik, accession, view = 'all') => get(`/api/filing/${cik}/${accession}${view === 'current' ? '?view=current' : ''}`),
   filingUrl: (cik, accession, view = 'all') => url(`/api/filing/${cik}/${accession}${view === 'current' ? '?view=current' : ''}`),
   quarters: (id, year) => get(`/api/company/${encodeURIComponent(id)}/quarters?year=${year}`),
@@ -33,14 +33,9 @@ export const api = {
   screenUrl: (params) => url(`/api/screen?${new URLSearchParams(params)}`),
   scores: (ciks) => get(`/api/score?ciks=${ciks.join(',')}`),
   score: (cik, accession) => get(`/api/score/${cik}/${accession}`),
-  // browse pages
-  browseSic: () => get('/api/browse/sic'),
-  browseFiler: () => get('/api/browse/filer'),
+  // browse page
+  browseIndustry: () => get('/api/browse/industry'),
   browseCompanies: (params) => get(`/api/browse/companies?${new URLSearchParams(params)}`),
-  browseEtfs: (q = '') => get(`/api/browse/etf${q ? `?q=${encodeURIComponent(q)}` : ''}`),
-  etfHoldings: (ticker) => get(`/api/browse/etf/${encodeURIComponent(ticker)}`),
-  etfHoldingsUrl: (ticker) => url(`/api/browse/etf/${encodeURIComponent(ticker)}`),
-  etfLive: (ticker) => get(`/api/browse/etf/${encodeURIComponent(ticker)}/live`),
   // custom ETF charts
   quotesStatus: () => get('/api/quotes/status'),
   tvSymbol: (ticker) => get(`/api/quotes/tv-symbol/${encodeURIComponent(ticker)}`),

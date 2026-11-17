@@ -38,7 +38,11 @@ const fmt = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 });
 const fmtSmall = new Intl.NumberFormat('en-US', { maximumFractionDigits: 4 });
 const fmtPerShare = new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
 
+// a member's column title: the report's own (memberLabels: the equity
+// statement's component headings, 普通股股本 / Ordinary share), else its name split up
 function humanize(member) {
+  const own = props.statement.memberLabels?.[member];
+  if (own) return (props.lang === 'zh' ? own.zh : own.en) || own.zh || own.en;
   return member
     .split(':')
     .pop()
@@ -122,7 +126,7 @@ function rowClass(item) {
     <table>
       <thead>
         <tr>
-          <th class="label">{{ statement.title }}</th>
+          <th class="label">{{ (lang === 'zh' && statement.titleZh) || statement.title }}</th>
           <th class="unit hide-p">{{ t('st.unit') }}</th>
           <th v-for="c in columns" :key="c.id" class="num">
             <div v-if="c.dimLabel" class="dim" :title="Object.values(c.dimensions).join(', ')">{{ c.dimLabel }}</div>

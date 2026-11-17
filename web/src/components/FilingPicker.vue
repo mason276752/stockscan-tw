@@ -11,15 +11,13 @@ const emit = defineEmits(['select', 'select-quarters']);
 const PERIODS = ['Q1', 'Q2', 'Q3', 'FY'];
 const canDerive = (slots) => PERIODS.every((p) => slots[p]);
 
-// fiscal year -> { Q1: filing, Q2: ..., FY: ... }  (newest year first)
+// year -> { Q1: report, Q2: ..., FY: ... }  (newest year first)
 const years = computed(() => {
   const map = new Map();
   for (const f of props.filings) {
     if (!f.fiscalYear) continue;
     if (!map.has(f.fiscalYear)) map.set(f.fiscalYear, {});
-    const slot = map.get(f.fiscalYear);
-    // amendments (10-K/A) come later; keep the original unless nothing else
-    if (!slot[f.fiscalPeriod] || !f.form.endsWith('/A')) slot[f.fiscalPeriod] = f;
+    map.get(f.fiscalYear)[f.fiscalPeriod] ||= f;
   }
   return [...map.entries()].sort((a, b) => b[0] - a[0]);
 });
@@ -38,10 +36,10 @@ const years = computed(() => {
         <button
           v-if="slots[p]"
           :class="{ active: slots[p].accession === selected }"
-          :title="`${slots[p].form}  ${t('meta.periodEnd')} ${slots[p].reportDate}  ${t('meta.filingDate')} ${slots[p].filingDate}`"
+          :title="`${t(`form.${slots[p].form}`)}  ${t('meta.periodEnd')} ${slots[p].reportDate}${slots[p].filingDate ? `  ${t('meta.filingDate')} ${slots[p].filingDate}` : ''}`"
           @click="emit('select', slots[p])"
         >
-          {{ slots[p].form }}
+          {{ t(`formShort.${slots[p].form}`) }}
         </button>
         <span v-else class="muted">—</span>
       </span>

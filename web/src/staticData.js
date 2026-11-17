@@ -19,7 +19,8 @@ const utf8 = new TextDecoder();
 // once fetched it is kept in the browser's Cache Storage and never
 // downloaded again. Index files of earlier builds are dropped from it when
 // the current build's meta.json arrives.
-const STORE_CACHE = 'stockscan-store-v1';
+// (sstw-: the US stockscan site on the same origin clears its own stockscan-* caches)
+const STORE_CACHE = 'sstw-store-v1';
 const PROGRESS_MIN = 32 * 1024; // report the progress of downloads from this size
 let onProgress = null; // (path, loaded, total, done) => void
 export function setProgress(fn) {
@@ -162,10 +163,7 @@ export const screenIndex = () => index('screen');
 export const screenHistoryIndex = () => index('screen-history');
 export const universe = () => index('universe');
 export const browse = () => index('browse');
-export const etfs = () => index('etfs');
-export const etfHoldings = (ticker) => index(`etf-${ticker}`);
 export const tvSymbols = () => index('tvsymbols');
-export const documentation = () => index('documentation');
 
 // ---- zstd ----
 // the decoder (80 KB, preloaded by index.html) is all the indexes and bars

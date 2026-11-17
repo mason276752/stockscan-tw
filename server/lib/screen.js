@@ -5,7 +5,7 @@
 import { ROWS as INDICATOR_ROWS } from './indicators.js';
 import { AMOUNT_FIELDS } from './scoreModel.js';
 import { MARKET_FIELDS } from './marketFields.js';
-import { FILER_STATUS, SIC, sicInfo } from './sic.js';
+import { INDUSTRY, industryInfo } from './industry.js';
 
 // Screener fields: the score, every indicator row, statement amounts (from
 // the latest filing), and the market snapshot (price, market cap, multiples).
@@ -23,17 +23,15 @@ const pctField = (key) => {
 };
 
 // One screener row: a company's newest score (with prev / yoy), its
-// universe record (industry, filer status, float) and market snapshot record.
+// universe record (industry) and market snapshot record.
 export function screenRow(s, c, mk) {
   return {
     cik: c.cik,
     ticker: c.ticker,
     tickers: c.tickers,
     name: c.name,
-    sic: c.sic,
-    sicZh: sicInfo(c.sic)?.zh || null,
-    afs: c.afs,
-    float: c.float,
+    industry: c.industry,
+    industryZh: industryInfo(c.industry)?.zh || null,
     score: { score: s.score, coverage: s.coverage, accession: s.accession, form: s.form, fiscalYear: s.fiscalYear, fiscalPeriod: s.fiscalPeriod, periodEnd: s.periodEnd, filingDate: s.filingDate, categories: s.categories.map((x) => x.score) },
     values: s.values || {},
     prev: s.prev ? { fiscalYear: s.prev.fiscalYear, fiscalPeriod: s.prev.fiscalPeriod, periodEnd: s.prev.periodEnd, score: s.prev.score, values: s.prev.values } : null,
@@ -69,7 +67,7 @@ export function screenRows(scores, companiesByCik, marketByTicker = null) {
 // are materialised as objects.
 const SCORE_KEYS = ['score', 'coverage', 'accession', 'form', 'fiscalYear', 'fiscalPeriod', 'periodEnd', 'filingDate', 'categories'];
 const BASE_KEYS = ['fiscalYear', 'fiscalPeriod', 'periodEnd', 'score']; // prev / yoy, plus values
-const ROW_KEYS = ['cik', 'ticker', 'tickers', 'name', 'sic', 'sicZh', 'afs', 'float', 'history'];
+const ROW_KEYS = ['cik', 'ticker', 'tickers', 'name', 'industry', 'industryZh', 'history'];
 
 // rows -> columns (what index/screen.json holds)
 export function screenColumns(rows) {
@@ -108,9 +106,7 @@ const rowTable = (rows) => ({
   ticker: (i) => rows[i].ticker,
   tickers: (i) => rows[i].tickers,
   name: (i) => rows[i].name,
-  sic: (i) => rows[i].sic,
-  afs: (i) => rows[i].afs,
-  float: (i) => rows[i].float,
+  industry: (i) => rows[i].industry,
   score: (i) => rows[i].score.score,
   value: (i, key) => rows[i].values[key] ?? null,
   baseScore: (i, mode) => (mode === 'chg' ? rows[i].prev : rows[i].yoy)?.score ?? null,
@@ -150,9 +146,7 @@ function columnTable(c) {
     ticker: (i) => c.ticker[i],
     tickers: (i) => c.tickers[i],
     name: (i) => c.name[i],
-    sic: (i) => c.sic[i],
-    afs: (i) => c.afs[i],
-    float: (i) => c.float[i],
+    industry: (i) => c.industry[i],
     score: (i) => c.score.score[i],
     value: (i, key) => num(values[key], i),
     baseScore: (i, mode) => (bases[mode]?.has[i] ? bases[mode].score[i] : null),
@@ -190,28 +184,22 @@ const valueOf = (t, i, key, mode = 'now') => {
 };
 
 // The query of GET /api/screen applied to the rows (an array of screenRow
-// objects, the columns of screenColumns, or a screenTable of either): sic /
-// division / afs / exclusions / text, <key>[_chg|_yoy]_min|max ranges,
+// objects, the columns of screenColumns, or a screenTable of either):
+// industry / division / exclusions / text, <key>[_chg|_yoy]_min|max ranges,
 // sort, limit. (history=1 is the page's hint that it shows change columns:
 // no effect here, see wantsHistory.)
-export function screenQuery(rows, q) {
-  const t = screenTable(rows);
-  const sic = q.sic ? String(q.sic).padStart(4, '0') : null;
-  const sic2 = q.sic2 ? String(q.sic2).padStart(2, '0') : null;
-  const division = q.division ? SIC.divisions.find((d) => d.id === String(q.division).toUpperCase()) : null;
-  const exDiv = String(q.exdiv || '')
+const list = (v) =>
+  String(v || '')
     .split(',')
     .map((x) => x.trim().toUpperCase())
-    .filter(Boolean)
-    .map((id) => SIC.divisions.find((d) => d.id === id))
     .filter(Boolean);
-  const exSic = String(q.exsic || '')
-    .split(',')
-    .map((x) => x.trim())
-    .filter((x) => /^\d{2,4}$/.test(x));
-  const afs = q.afs ? String(q.afs).toUpperCase() : null;
+export function screenQuery(rows, q) {
+  const t = screenTable(rows);
+  const industry = q.industry ? String(q.industry).padStart(2, '0') : null;
+  const division = q.division ? String(q.division).toUpperCase() : null;
+  const exDiv = new Set(list(q.exdiv));
+  const exInd = new Set(list(q.exind).map((x) => x.padStart(2, '0')));
   const text = String(q.q || '').trim().toUpperCase();
-  const listedOnly = q.listed !== '0';
   const ranges = [];
   for (const [k, v] of Object.entries(q)) {
     const m = /^(.+?)(?:_(chg|yoy))?_(min|max)$/.exec(k);
@@ -223,14 +211,11 @@ export function screenQuery(rows, q) {
   }
   const out = [];
   for (let i = 0; i < t.length; i++) {
-    if (listedOnly && !t.ticker(i)) continue;
-    const code = t.sic(i) || '0000';
-    if (sic && code !== sic) continue;
-    if (sic2 && !code.startsWith(sic2)) continue;
-    if (division && !(code.slice(0, 2) >= division.from && code.slice(0, 2) <= division.to)) continue;
-    if (exDiv.some((d) => code.slice(0, 2) >= d.from && code.slice(0, 2) <= d.to)) continue;
-    if (exSic.some((x) => code.startsWith(x))) continue;
-    if (afs && (t.afs(i) || 'UNKNOWN') !== afs) continue;
+    const code = t.industry(i) || '';
+    const div = industryInfo(code)?.division || 'I';
+    if (industry && code !== industry) continue;
+    if (division && div !== division) continue;
+    if (exDiv.has(div) || exInd.has(code)) continue;
     if (text && !(t.name(i).toUpperCase().includes(text) || (t.tickers(i) || []).some((x) => x.startsWith(text)))) continue;
     let ok = true;
     for (const x of ranges) {
@@ -245,7 +230,7 @@ export function screenQuery(rows, q) {
   const sortKey = String(q.sort || 'score');
   const sortMode = ['chg', 'yoy'].includes(String(q.sortmode || '')) ? String(q.sortmode) : 'now';
   const dir = q.dir === 'asc' ? 1 : -1;
-  const sv = (i) => (sortMode !== 'now' ? changeOf(t, i, sortKey, sortMode) : MARKET_KEYS.has(sortKey) ? t.market(i, sortKey) : sortKey === 'score' ? t.score(i) : sortKey === 'float' ? t.float(i) : sortKey === 'name' ? t.name(i) : sortKey === 'ticker' ? t.ticker(i) : t.value(i, sortKey));
+  const sv = (i) => (sortMode !== 'now' ? changeOf(t, i, sortKey, sortMode) : MARKET_KEYS.has(sortKey) ? t.market(i, sortKey) : sortKey === 'score' ? t.score(i) : sortKey === 'name' ? t.name(i) : sortKey === 'ticker' ? t.ticker(i) : t.value(i, sortKey));
   const keys = out.map(sv);
   const order = out.map((_, k) => k);
   order.sort((a, b) => {
@@ -265,86 +250,50 @@ export const wantsMarket = (q) => Object.keys(q).some((k) => MARKET_KEYS.has(k.r
 
 // ---- browse lists ----
 
-export const companyRow = (c) => ({
-  cik: c.cik,
-  name: c.name,
-  ticker: c.ticker,
-  tickers: c.tickers,
-  sic: c.sic,
-  sicZh: sicInfo(c.sic)?.zh || null,
-  sicTitle: sicInfo(c.sic)?.title || null,
-  afs: c.afs,
-  wksi: c.wksi,
-  float: c.float,
-  floatDate: c.floatDate,
-  floatAdjusted: c.floatAdjusted,
-  form: c.form,
-  period: c.period,
-  filed: c.filed,
-  state: c.state,
-  country: c.country,
-});
+export const companyRow = (c) => {
+  const ind = industryInfo(c.industry);
+  return {
+    cik: c.cik,
+    name: c.name,
+    fullName: c.fullName,
+    nameEn: c.nameEn,
+    ticker: c.ticker,
+    tickers: c.tickers,
+    industry: c.industry,
+    industryZh: ind?.zh || null,
+    industryTitle: ind?.title || null,
+    listedDate: c.listedDate,
+    capital: c.capital,
+    marketCap: c.marketCap ?? null,
+    foreign: c.foreign,
+  };
+};
 
-// SIC divisions and 4-digit codes with company counts
-export function sicCounts(companies) {
+// industry divisions and codes with company counts
+export function industryCounts(companies) {
   const counts = new Map();
-  for (const c of companies) {
-    const k = c.sic || '0000';
-    const n = counts.get(k) || { total: 0, listed: 0 };
-    n.total++;
-    if (c.ticker) n.listed++;
-    counts.set(k, n);
-  }
-  const codes = SIC.codes.map((s) => ({ ...s, ...(counts.get(s.code) || { total: 0, listed: 0 }) }));
-  // codes that appear in filings but not on SEC's list
-  for (const [code, n] of counts) if (!SIC.codes.some((s) => s.code === code)) codes.push({ code, title: null, zh: code === '0000' ? '未指定' : null, division: 'J', office: null, ...n });
-  return { divisions: SIC.divisions, codes };
+  for (const c of companies) counts.set(c.industry, (counts.get(c.industry) || 0) + 1);
+  const codes = INDUSTRY.codes.map((x) => ({ ...x, total: counts.get(x.code) || 0 }));
+  for (const [code, total] of counts) if (code && !INDUSTRY.codes.some((x) => x.code === code)) codes.push({ ...industryInfo(code), total });
+  return { divisions: INDUSTRY.divisions, codes };
 }
 
-// filer-status categories with counts
-export function filerCounts(companies) {
-  const counts = {};
-  for (const c of companies) {
-    const k = c.afs || 'UNKNOWN';
-    counts[k] ??= { total: 0, listed: 0, wksi: 0 };
-    counts[k].total++;
-    if (c.ticker) counts[k].listed++;
-    if (c.wksi) counts[k].wksi++;
-  }
-  return [...Object.keys(FILER_STATUS), 'UNKNOWN'].map((k) => ({
-    key: k,
-    ...(FILER_STATUS[k] || { label: 'Not stated', zh: '未標示', note: '申報書未標示身分' }),
-    ...(counts[k] || { total: 0, listed: 0, wksi: 0 }),
-  }));
-}
-
-// companies of a SIC code / filer status, largest public float first (the universe is already sorted so)
+// companies of an industry (the universe is already sorted biggest first)
 export function browseCompanies(companies, query) {
-  const sic = query.sic ? String(query.sic).padStart(4, '0') : null;
-  const afs = query.afs ? String(query.afs).toUpperCase() : null;
-  const listedOnly = query.listed !== '0';
+  const industry = query.industry ? String(query.industry).padStart(2, '0') : null;
   const q = String(query.q || '').trim().toUpperCase();
   let rows = companies;
-  if (sic) rows = rows.filter((c) => (c.sic || '0000') === sic);
-  if (afs) rows = rows.filter((c) => (c.afs || 'UNKNOWN') === afs);
-  if (listedOnly) rows = rows.filter((c) => c.ticker);
-  if (q) rows = rows.filter((c) => c.name.toUpperCase().includes(q) || c.tickers.some((t) => t.startsWith(q)));
+  if (industry) rows = rows.filter((c) => c.industry === industry);
+  if (q) rows = rows.filter((c) => c.name.includes(q) || (c.fullName || '').includes(q) || (c.nameEn || '').toUpperCase().includes(q) || c.ticker.startsWith(q));
   return {
-    sic: sic ? sicInfo(sic) : null,
-    filer: afs ? { key: afs, ...(FILER_STATUS[afs] || { label: 'Not stated', zh: '未標示' }) } : null,
+    industry: industry ? industryInfo(industry) : null,
     count: rows.length,
     companies: rows.slice(0, Number(query.limit) || 2000).map(companyRow),
   };
 }
 
-// ticker / company-name suggestions (ticker prefix first, then names)
-export function searchRows(rows, q, limit = 10) {
-  const needle = String(q).trim().toUpperCase().replace(/\./g, '-');
-  if (!needle) return [];
-  const starts = rows.filter((r) => r.ticker.startsWith(needle));
-  const names = rows.filter((r) => !r.ticker.startsWith(needle) && r.name.toUpperCase().includes(needle));
-  return [...starts, ...names].slice(0, limit);
-}
+// code / company-name suggestions (code prefix first, then names)
+export { searchListed as searchRows } from './companySearch.js';
 
 // the score summary every list shows next to a company
 export const scoreBadge = (s) => (s ? { score: s.score, coverage: s.coverage, accession: s.accession, form: s.form, fiscalYear: s.fiscalYear, fiscalPeriod: s.fiscalPeriod, periodEnd: s.periodEnd, filingDate: s.filingDate, categories: s.categories.map((c) => c.score) } : null);

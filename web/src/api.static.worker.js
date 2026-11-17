@@ -1,25 +1,24 @@
 // The pure-frontend data layer, in a Web Worker: the same methods as
 // api.http.js, answered from static files (the saved filings and the indexes
 // `npm run build:static` writes) with the server's own computation modules
-// running in the browser. Nothing here talks to SEC, TradingView or a
-// broker, so what needs live data (prices, valuation, own-computed basket
-// charts, fetching a filing that is not saved) is unavailable and says so.
+// running in the browser. Nothing here talks to MOPS, TradingView or a
+// broker, so what needs live data (fetching a report that is not saved)
+// is unavailable and says so.
 //
 // It runs off the main thread so fetching, inflating and parsing the indexes
 // (the screener's 11 MB of columns, the 12 MB company list), decoding a
 // company's filings for its indicators and computing a basket index never
 // stall the page; api.static.js on the page is the proxy that forwards each
 // call here (see the message loop at the end) and only the answers cross.
-import { applyZh } from '../../server/lib/zh.js';
 import { reclassify } from '../../server/lib/statementTypes.js';
 import { fatten } from '../../server/lib/storeFormat.js';
 import { currentView } from '../../server/lib/current.js';
 import { buildQuarterly } from '../../server/lib/quarters.js';
 import { buildIndicators } from '../../server/lib/indicators.js';
-import { filingFile, filingUrls, pickFiling, scoreFile } from '../../server/lib/filings.js';
+import { filingFile, mopsUrls, parseAccession, pickFiling, scoreFile } from '../../server/lib/filings.js';
 import { ITEMS, SCORE_VERSION, scoreFilingOf } from '../../server/lib/scoreModel.js';
 import { SCREEN_FIELDS, browseCompanies, screenQuery, screenTable, searchRows, wantsHistory } from '../../server/lib/screen.js';
-import { FILER_STATUS, SIC, sicInfo } from '../../server/lib/sic.js';
+import { INDUSTRY } from '../../server/lib/industry.js';
 import { adjusted, decodeBars } from '../../server/lib/barFormat.js';
 import { basketRequest, runBasket } from '../../server/lib/basket.js';
 import { buildValuation } from '../../server/lib/valuation.js';
@@ -32,37 +31,38 @@ const t = (key, params) => translate(locale, key, params);
 
 const unavailable = (what) => Promise.reject(new Error(t('static.unavailable', { what: t(what) })));
 
-// ticker / CIK -> the company record of the index
+// company code (or short name) -> the company record of the index
 async function companyOf(id) {
   const all = await data.companies();
   const s = String(id).trim();
   let cik = /^\d+$/.test(s) ? Number(s) : null;
   if (cik == null) {
-    const t = s.toUpperCase().replace(/\./g, '-');
-    const row = (await data.tickers()).find((r) => r.ticker === t);
-    if (!row) throw new Error(`Ticker not found: ${id}`);
+    const row = (await data.tickers()).find((r) => r.name === s);
+    if (!row) throw new Error(t('static.noCompany', { cik: s }));
     cik = row.cik;
   }
   const c = all[cik];
   if (!c) throw new Error(t('static.noCompany', { cik }));
-  if (!c.filings[0]?.viewerUrl) {
-    // the store paths the index left out because they follow the naming
+  if (!c.urlsDone) {
+    // the MOPS links and store paths the index left out because they follow the naming
     const m = await data.meta();
     for (const f of c.filings) {
-      Object.assign(f, { cik, isInlineXBRL: true }, f.primaryDocument ? filingUrls(cik, f.accession, f.primaryDocument) : {});
+      const p = parseAccession(f.accession);
+      Object.assign(f, { cik }, p ? mopsUrls(p.code, p.year, p.quarter, f.reportId || 'C') : {});
       f.file ??= filingFile(cik, f, m.scrapeVersion);
       if (f.scoreFile === true) f.scoreFile = scoreFile(cik, f, m.scoreVersion);
       else f.scoreFile ??= null;
     }
+    c.urlsDone = true;
   }
   return c;
 }
 
-// a saved filing, as the server hands it out
+// a saved report, as the server hands it out
 async function loadFiling(f) {
   if (!f?.file) throw new Error(t('static.notSaved', { what: f?.accession || t('static.thisFiling') }));
-  const [rec, docs] = await Promise.all([data.readZst('filings', `/data/store/${f.file}`), data.documentation()]);
-  return applyZh(reclassify(fatten(rec.data, docs)));
+  const rec = await data.readZst('filings', `/data/store/${f.file}`);
+  return reclassify(fatten(rec.data));
 }
 
 // the screener's columns as the table screenQuery reads: without the prev /
@@ -80,7 +80,7 @@ const api = {
   },
   async company(id) {
     const c = await companyOf(id);
-    return { ...c, sicZh: sicInfo(c.sic)?.zh || null, filingsUpdatedAt: (await data.meta()).builtAt, filingsStale: false };
+    return { ...c, filingsUpdatedAt: (await data.meta()).builtAt, filingsStale: false };
   },
   async filing(cik, accession, view = 'all') {
     const c = await companyOf(cik);
@@ -115,10 +115,9 @@ const api = {
     const basis = params.basis === 'ttm' ? 'ttm' : 'x4';
     return buildIndicators(loadFiling, c, { year, period, n, basis, mode });
   },
-  // the valuation page from saved filings and shipped bars: parsed cover
-  // shares travel inside each filing (buildValuation indexes them itself);
-  // this empty provider is only for pre-cover-share historical filings. No
-  // split events or FX rates are shipped.
+  // the valuation page from saved reports and shipped bars: share counts
+  // travel inside each report (buildValuation indexes them itself). No split
+  // events or FX rates are shipped.
   async valuation(id, params) {
     const c = await companyOf(id);
     const year = Number(params.year);
@@ -148,7 +147,7 @@ const api = {
   },
   async screenFields() {
     const m = await data.meta();
-    return { fields: SCREEN_FIELDS, divisions: SIC.divisions, filer: FILER_STATUS, market: m.market };
+    return { fields: SCREEN_FIELDS, industries: INDUSTRY, market: m.market };
   },
   async screen(params) {
     const [rows, m] = await Promise.all([screenRows(wantsHistory(params)), data.meta()]);
@@ -169,47 +168,14 @@ const api = {
     if (!s) throw new Error('Cannot score this filing');
     return s;
   },
-  // browse pages (the counts come precomputed; the company lists from the universe)
-  async browseSic() {
+  // browse page (the counts come precomputed; the company lists from the universe)
+  async browseIndustry() {
     const b = await data.browse();
-    return { updatedAt: b.updatedAt, datasets: b.datasets, ...b.sic };
-  },
-  async browseFiler() {
-    const b = await data.browse();
-    return { updatedAt: b.updatedAt, datasets: b.datasets, categories: b.filer };
+    return { updatedAt: b.updatedAt, ...b.industry };
   },
   async browseCompanies(params) {
     const u = await data.universe();
     return { updatedAt: u.updatedAt, ...browseCompanies(u.companies, params) };
-  },
-  async browseEtfs(q = '') {
-    const e = await data.etfs();
-    const needle = String(q).trim().toUpperCase();
-    const rank = new Map(e.popular.map((t, i) => [t, i]));
-    let rows = e.etfs;
-    if (needle) rows = rows.filter((x) => x.ticker.startsWith(needle) || x.name.toUpperCase().includes(needle) || (x.entity || '').toUpperCase().includes(needle));
-    rows = [...rows].sort((a, b) => (rank.get(a.ticker) ?? 1e9) - (rank.get(b.ticker) ?? 1e9) || a.ticker.localeCompare(b.ticker));
-    return { updatedAt: e.updatedAt, total: e.etfs.length, count: rows.length, popular: e.popular, etfs: rows.slice(0, 300) };
-  },
-  async etfHoldings(ticker) {
-    const e = await data.etfs();
-    const tk = String(ticker).toUpperCase();
-    if (!e.holdings.includes(tk)) throw new Error(t('static.onlyEtfs', { list: e.popular.join(t('sep')) }));
-    return data.etfHoldings(tk);
-  },
-  async etfLive(ticker) {
-    // the N-PORT snapshot of the build stands in for the issuer's daily file
-    const h = await api.etfHoldings(ticker);
-    return {
-      etf: h.etf,
-      source: `N-PORT (${h.filing?.reportDate || '—'})`,
-      asOf: h.filing?.reportDate || null,
-      holdings: h.holdings.filter((x) => x.symbol && x.pctVal > 0 && x.assetCat === 'EC').map((x) => ({ symbol: x.symbol, name: x.name, weight: x.pctVal, shares: x.balance ?? null, cik: x.cik })),
-      nport: true,
-      note: 'static build: the N-PORT holdings of the build stand in for the issuer daily file',
-      fallbackErrors: [],
-      fetchedAt: null,
-    };
   },
   // custom ETF charts: the bars the build shipped (data/bars, TradingView's
   // to the build's day), else only TradingView's own widget
@@ -218,9 +184,9 @@ const api = {
     return { static: true, bars: m.bars || null, builtAt: m.builtAt, tv: { enabled: false, connected: false }, ib: { enabled: false, connected: false }, source: 'TradingView', tvLibrary: false };
   },
   async tvSymbol(ticker) {
-    const t = String(ticker).toUpperCase().replace(/\./g, '-');
+    const t = String(ticker).toUpperCase();
     const m = (await data.tvSymbols())[t];
-    return m ? { ticker: t, ...m, known: true } : { ticker: t, symbol: t.replace(/-/g, '.'), exchange: null, known: false };
+    return m ? { ticker: t, ...m, known: true } : { ticker: t, symbol: `TWSE:${t}`, exchange: 'TWSE', known: false };
   },
   ibConnect: () => unavailable('static.whatTws'),
   // ten years of daily bars from the files the build shipped: the finished
@@ -244,7 +210,7 @@ const api = {
     const raw = years.flatMap(decodeBars).concat(head ? decodeBars(head) : []);
     if (!raw.length) throw new Error(t('static.noBars', { s }));
     // headMissing: the build shipped no head.zst for it - the series stops at last year's end
-    return { symbol: s, source: meta.source || 'TradingView', currency: meta.currency || 'USD', resolved: meta.resolved || null, fetchedAt: head?.fetchedAt || null, headMissing: !head, days: adjusted(raw, meta.adjust || []) };
+    return { symbol: s, source: meta.source || 'TradingView', currency: meta.currency || 'TWD', resolved: meta.resolved || null, fetchedAt: head?.fetchedAt || null, headMissing: !head, days: adjusted(raw, meta.adjust || []) };
   },
   // the custom-ETF index, computed here from those bars
   async basket(body) {
@@ -254,13 +220,7 @@ const api = {
     const req = basketRequest(body || {});
     const rows = await data.tickers();
     const byTicker = new Map(rows.map((r) => [r.ticker, r]));
-    const byCik = new Map(rows.map((r) => [r.cik, r]));
-    const listingOf = (ticker, cik) => {
-      const t = String(ticker).toUpperCase().replace(/\./g, '-');
-      if (byTicker.has(t)) return { listed: true };
-      const same = cik ? byCik.get(Number(cik)) : null;
-      return same ? { listed: false, renamed: same.ticker } : { listed: false };
-    };
+    const listingOf = (ticker) => ({ listed: byTicker.has(String(ticker).toUpperCase()) });
     const m = await data.meta();
     return runBasket(req, (t) => api.bars(t), { emit: onEvent, interim: body?.interim ? 1200 : 0, signal, listingOf, extra: { static: true, ib: false, tv: false, asOf: m.builtAt } });
   },
@@ -270,11 +230,9 @@ const WARM = {
   'idx:tickers': data.tickers,
   'idx:scores': data.scoresMin,
   'idx:companies': data.companies,
-  'idx:documentation': data.documentation,
   'idx:tvsymbols': data.tvSymbols,
   'idx:browse': data.browse,
   'idx:universe': data.universe,
-  'idx:etfs': data.etfs,
   'idx:screen': () => screenRows(false),
   'idx:screen-history': () => screenRows(true),
 };

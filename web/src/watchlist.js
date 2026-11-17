@@ -3,8 +3,8 @@
 //   groups: [name, ...]   user-defined categories (e.g. 航運股), a stock may be in several
 import { reactive, watch } from 'vue';
 
-const KEY = 'stockscan.watchlist';
-const KEY_GROUPS = 'stockscan.watchgroups';
+const KEY = 'stockscan-tw.watchlist';
+const KEY_GROUPS = 'stockscan-tw.watchgroups';
 
 function load(key, fallback) {
   try {

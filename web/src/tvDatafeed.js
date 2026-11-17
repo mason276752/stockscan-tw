@@ -18,8 +18,8 @@ export function makeDatafeed({ name, bars, overlayName = '', overlay = () => [] 
     type: 'index',
     session: '0930-1600',
     timezone: 'America/New_York',
-    exchange: 'stockscan',
-    listed_exchange: 'stockscan',
+    exchange: 'stockscan-tw',
+    listed_exchange: 'stockscan-tw',
     format: 'price',
     minmov: 1,
     pricescale: 100,
@@ -37,7 +37,7 @@ export function makeDatafeed({ name, bars, overlayName = '', overlay = () => [] 
     },
     searchSymbols(input, _exchange, _type, onResult) {
       const q = String(input || '').toLowerCase();
-      onResult(symbols().filter((s) => s.name.toLowerCase().includes(q)).map((s) => ({ symbol: s.name, full_name: s.name, description: s.description, exchange: 'stockscan', type: 'index' })));
+      onResult(symbols().filter((s) => s.name.toLowerCase().includes(q)).map((s) => ({ symbol: s.name, full_name: s.name, description: s.description, exchange: 'stockscan-tw', type: 'index' })));
     },
     resolveSymbol(symbolName, onResolve, onError) {
       const s = symbols().find((x) => x.name === symbolName) || symbols()[0];

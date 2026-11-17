@@ -93,15 +93,11 @@ export function unadjust(b, adjust) {
   return price === 1 ? b : { date: b.date, open: round(b.open * price), high: round(b.high * price), low: round(b.low * price), close: round(b.close * price), volume: Math.round(b.volume * volume) };
 }
 
-// 19:15 New York on `date`: a bar fetched before that may still have been
-// forming. The classic session closes at 16:00, but from December 2026 the
-// US session runs 23 hours (20:00 ET to 19:00 ET the next day, closed
-// 19:00-20:00), so the day's bar is only certainly final in that pause.
-const NY_HOUR = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', hour12: false });
+// 14:30 Taipei (UTC+8, no daylight saving) on `date`: a bar fetched before
+// that may still have been forming. TWSE's regular session closes with the
+// 13:25-13:30 call auction; the after-hours fixed-price session runs to 14:30.
 export function settledAt(date) {
-  const noon = Date.parse(`${date}T12:00:00Z`);
-  const behind = 12 - (Number(NY_HOUR.format(new Date(noon))) % 24); // hours New York is behind UTC (4 or 5)
-  return noon + (7.25 + behind) * 3_600_000;
+  return Date.parse(`${date}T06:30:00Z`);
 }
 
 // Compare the incoming series with the saved view over the dates both have:

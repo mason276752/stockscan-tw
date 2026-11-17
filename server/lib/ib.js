@@ -80,12 +80,8 @@ export function ibDisconnect() {
   if (api && state !== 'disconnected') api.disconnect();
 }
 
-// IB writes share classes with a space (BRK B) where EDGAR uses "-" / "." (BRK-B).
-export const ibSymbol = (ticker) => String(ticker).toUpperCase().replace(/[-.]/g, ' ');
-
-// EDGAR's ticker table carries no exchange: an ambiguous symbol (the same
-// ticker on several IB exchanges) is retried with these primary exchanges.
-const PRIMARY = ['NASDAQ', 'NYSE', 'ARCA', 'AMEX'];
+// IB knows a TWSE stock by its code on exchange TWSE, in TWD.
+export const ibSymbol = (ticker) => String(ticker).toUpperCase();
 
 const withTimeout = (p, ms, what) =>
   Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(`${what}: TWS did not answer within ${ms / 1000}s`)), ms).unref())]);
@@ -94,23 +90,18 @@ const withTimeout = (p, ms, what) =>
 // [{ date, open, high, low, close, volume }]
 export async function ibDailyBars(ticker, { years = 10, days: span = null } = {}) {
   if (!(await ibConnect(2000))) throw Object.assign(new Error('IBKR TWS is not connected'), { status: 503 });
-  const contract = { symbol: ibSymbol(ticker), secType: SecType.STK, exchange: 'SMART', currency: 'USD' };
+  const contract = { symbol: ibSymbol(ticker), secType: SecType.STK, exchange: 'TWSE', currency: 'TWD' };
   const ask = async (c) => {
     requests++;
     const duration = span ? (span <= 365 ? `${span} D` : `${Math.ceil(span / 365)} Y`) : `${years} Y`;
     return withTimeout(api.getHistoricalData(c, '', duration, BarSizeSetting.DAYS_ONE, WhatToShow.TRADES, 1, 1), 45_000, ticker);
   };
   let bars;
-  const tries = [contract, ...PRIMARY.map((primaryExch) => ({ ...contract, primaryExch }))];
-  for (let i = 0; i < tries.length; i++) {
-    try {
-      bars = await ask(tries[i]);
-      break;
-    } catch (err) {
-      const msg = err?.error?.message || err?.message || String(err);
-      if (/ambiguous/i.test(msg) && i < tries.length - 1) continue;
-      throw Object.assign(new Error(`IBKR: ${msg}`), { status: /no security definition|ambiguous/i.test(msg) ? 404 : 502 });
-    }
+  try {
+    bars = await ask(contract);
+  } catch (err) {
+    const msg = err?.error?.message || err?.message || String(err);
+    throw Object.assign(new Error(`IBKR: ${msg}`), { status: /no security definition|ambiguous/i.test(msg) ? 404 : 502 });
   }
   const days = [];
   for (const b of bars || []) {

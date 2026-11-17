@@ -1,7 +1,7 @@
 // Idle-time prefetch: when the user looks at a filing, quietly download the
 // filings around it (previous/next in time, the same quarter a year earlier
 // and later, and the rest of that fiscal year so the Q4 derivation is
-// instant). Runs one filing at a time, only while the SEC client is idle.
+// instant). Runs one report at a time, only while the MOPS client is idle.
 
 import { scrapeFiling, isCached } from './scrape.js';
 import { store } from './store.js';

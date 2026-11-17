@@ -10,7 +10,7 @@ const cls = (s) => (s == null ? 'none' : s >= 70 ? 'good' : s >= 40 ? 'mid' : 'b
 const title = () => {
   if (!props.score) return t(api.isStatic ? 'sb.noneStatic' : 'sb.none');
   const c = props.score.categories.map((v, i) => `${tr(CATS[i])} ${v == null ? '—' : v}`).join(t('sep'));
-  return `${props.score.form} ${props.score.fiscalYear} ${props.score.fiscalPeriod} (${t('meta.periodEnd')} ${props.score.periodEnd})\n${c}\n${t('sb.coverage', { n: props.score.coverage })}`;
+  return `${props.score.fiscalYear} ${props.score.fiscalPeriod} (${t('meta.periodEnd')} ${props.score.periodEnd})\n${c}\n${t('sb.coverage', { n: props.score.coverage })}`;
 };
 </script>
 

@@ -21,16 +21,15 @@ const RANGES = [
   ['10y', 10],
 ];
 const BENCHMARKS = [
-  ['SPY', () => 'S&P 500 (SPY)'],
-  ['QQQ', () => 'Nasdaq 100 (QQQ)'],
-  ['DIA', () => t('bk.dow')],
-  ['IWM', () => 'Russell 2000 (IWM)'],
+  ['0050', () => t('bk.bench0050')],
+  ['006208', () => t('bk.bench006208')],
+  ['0056', () => t('bk.bench0056')],
   ['', () => t('bk.noBenchmark')],
 ];
 
-const range = ref(localStorage.getItem('stockscan.basket.range') || '3y');
-const benchmark = ref(localStorage.getItem('stockscan.basket.bench') ?? 'SPY');
-const colors = ref(localStorage.getItem('stockscan.kcolors') || 'tw');
+const range = ref(localStorage.getItem('stockscan-tw.basket.range') || '3y');
+const benchmark = ref(localStorage.getItem('stockscan-tw.basket.bench') ?? '0050');
+const colors = ref(localStorage.getItem('stockscan-tw.kcolors') || 'tw');
 // chart: 'own'    = Advanced Charts / Lightweight Charts on the bars the server fetched
 //                   (TradingView websocket, else TWS, else Yahoo) - any number of stocks
 //        'widget' = TradingView's embeddable widget on a spread symbol (its own data, at most 10 stocks)
@@ -39,11 +38,11 @@ const colors = ref(localStorage.getItem('stockscan.kcolors') || 'tw');
 // TradingView's widget only
 const isStatic = api.isStatic;
 const noBars = ref(isStatic); // settled by quotesStatus()
-const chartSource = ref(isStatic || localStorage.getItem('stockscan.basket.chart') === 'widget' ? 'widget' : 'own');
-watch(chartSource, (v) => localStorage.setItem('stockscan.basket.chart', v));
-watch(range, (v) => localStorage.setItem('stockscan.basket.range', v));
-watch(benchmark, (v) => localStorage.setItem('stockscan.basket.bench', v));
-watch(colors, (v) => localStorage.setItem('stockscan.kcolors', v));
+const chartSource = ref(isStatic || localStorage.getItem('stockscan-tw.basket.chart') === 'widget' ? 'widget' : 'own');
+watch(chartSource, (v) => localStorage.setItem('stockscan-tw.basket.chart', v));
+watch(range, (v) => localStorage.setItem('stockscan-tw.basket.range', v));
+watch(benchmark, (v) => localStorage.setItem('stockscan-tw.basket.bench', v));
+watch(colors, (v) => localStorage.setItem('stockscan-tw.kcolors', v));
 
 const quotes = ref(null); // /api/quotes/status
 const advanced = ref(false); // TradingView Advanced Charts loaded
@@ -108,13 +107,8 @@ const syncing = ref(false);
 const syncMsg = ref('');
 const syncFailed = ref(false);
 const sourceLabel = (src) =>
-  !src ? '' : src.type === 'etf' ? t('bk.srcEtf', { ticker: src.ticker, top: src.n ? t('bk.topParen', { n: src.n }) : '' }) : src.type === 'screen' ? t('bk.srcScreen', { label: src.label || '', top: src.n ? t('bk.topParen', { n: src.n }) : '' }) : src.type === 'watch' ? t('bk.srcWatch', { group: src.group === 'all' ? t('wl.all') : src.group }) : '';
+  !src ? '' : src.type === 'screen' ? t('bk.srcScreen', { label: src.label || '', top: src.n ? t('bk.topParen', { n: src.n }) : '' }) : src.type === 'watch' ? t('bk.srcWatch', { group: src.group === 'all' ? t('wl.all') : src.group }) : '';
 async function fetchSource(src) {
-  if (src.type === 'etf') {
-    const r = await api.etfLive(src.ticker);
-    const rows = r.holdings.filter((h) => h.symbol && h.weight > 0).sort((a, b) => b.weight - a.weight);
-    return { holdings: (src.n ? rows.slice(0, src.n) : rows).map((h) => ({ ticker: h.symbol, cik: h.cik, name: h.name, weight: h.weight })), sourceName: r.source, asOf: r.asOf, note: r.note, approximate: r.approximate };
-  }
   if (src.type === 'screen') {
     const r = await api.screen({ ...src.params, limit: src.n || 2000 });
     const rows = r.rows.filter((x) => x.ticker);
@@ -187,7 +181,7 @@ async function loadQuotes() {
     quotes.value = await api.quotesStatus();
     if (isStatic) {
       noBars.value = !quotes.value.bars;
-      if (!noBars.value && localStorage.getItem('stockscan.basket.chart') !== 'widget') chartSource.value = 'own';
+      if (!noBars.value && localStorage.getItem('stockscan-tw.basket.chart') !== 'widget') chartSource.value = 'own';
     }
     if (quotes.value.tvLibrary && !window.TradingView?.widget) await loadTvLibrary();
     advanced.value = !!window.TradingView?.widget;
@@ -408,7 +402,7 @@ const rows = computed(() => {
 const TV_SPREAD_MAX = 10; // TradingView's limit on tickers in one spread
 // 60M is a TradingView preset that switches to weekly bars; 61M keeps daily
 const TV_RANGE = { '1y': '12M', '3y': '36M', '5y': '61M', '10y': '120M' };
-const tvSymbol = (t) => String(t).toUpperCase().replace(/-/g, '.'); // BRK-B -> BRK.B
+const tvSymbol = (t) => `TWSE:${String(t).toUpperCase()}`; // 2330 -> TWSE:2330 (a bare number is another market's)
 const sig = (v) => Number(v.toPrecision(6));
 const tvIncluded = computed(() => (current.value ? current.value.constituents.filter(inIndex) : []));
 const tvTooMany = computed(() => tvIncluded.value.length > TV_SPREAD_MAX);

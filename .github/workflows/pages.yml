@@ -1,53 +1,46 @@
 # Publish the pure-frontend build (web/dist-static) to GitHub Pages:
 #   - on every push to main (code only: the data comes from the data ref)
-#   - on a schedule around the hours filings land on EDGAR: first the day's new
-#     10-K / 10-Q / 20-F / 40-F are fetched, parsed, scored and pushed to the
-#     data ref, then the site is rebuilt with them
-#   - by hand (Actions → Run workflow)
-# Data lives on the ref refs/data/main, never on main: data/store (filings,
-# scores, filing lists) and data/bars (the finished years of daily bars).
-# Outside refs/heads/ so that a plain `git clone` does not download it
-# (600 MB) - only `git fetch origin refs/data/main` does (scripts/
-# pull-data.sh). Here it is fetched into data-repo/ and the tools are
-# pointed at it with STOCKSCAN_STORE / STOCKSCAN_BARS. After a scheduled
-# fetch the new files go up as one more commit on that ref. (A commit's
-# parent is what makes the push small: git only sends what the parent
-# lacks. An orphan commit, or a rewritten ref, would resend all 600 MB.)
+#   - every three hours: first the TWSE listed-company table is refreshed - a
+#     new listing joins, a delisted company's reports are dropped - then the
+#     reports MOPS has and the store lacks are fetched in a batch of
+#     STOCKSCAN_FETCH_BUDGET minutes, parsed, scored and pushed to the data
+#     ref, then the site is rebuilt and published. Each batch takes the
+#     newest quarter of every company first, then the quarter before for
+#     every company, and so on (biggest companies first within a quarter):
+#     a new repository shows every company's latest report after the first
+#     couple of runs and fills in the older quarters over the next days;
+#     after that a run finds only the new reports and is short
+#   - by hand (Actions → Run workflow), optionally with another budget
+# Data lives on the ref refs/data/main, never on main: data/store (reports,
+# scores, the listed table) and data/bars (the finished years of daily
+# bars). Outside refs/heads/ so that a plain `git clone` does not download
+# it - only `git fetch origin refs/data/main` does (scripts/pull-data.sh).
+# Here it is fetched into data-repo/ (or started empty the first time) and
+# the tools are pointed at it with STOCKSCAN_STORE / STOCKSCAN_BARS. After a
+# scheduled fetch the new files go up as one more commit on that ref. (A
+# commit's parent is what makes the push small: git only sends what the
+# parent lacks. An orphan commit, or a rewritten ref, would resend it all.)
 # This year's bars (head.zst, not in git) are fetched from TradingView here
 # before the build and kept between runs in the Actions cache.
-# Needs: Settings → Pages → Source = "GitHub Actions". SEC_USER_AGENT ("Name
-# email") comes from the repository secret of that name, else the default
-# below - the build fetches the ticker table, the SIC / filer universe and ETF
-# lists from SEC (falling back to the copies in data/store); the market
-# snapshot comes from TradingView.
+# Needs: Settings → Pages → Source = "GitHub Actions".
 name: Deploy static site to GitHub Pages
 
 on:
   push:
     branches: [main]
   schedule:
-    # cron is UTC. New York is UTC-4 in summer (EDT, second Sunday of March to
-    # the first Sunday of November) and UTC-5 in winter (EST), so each time
-    # below is written for one clock and drifts an hour under the other.
-    #
-    # Filings - EDGAR accepts them 06:00-22:00 ET; most 10-Q / 10-K arrive
-    # right after the 16:00 close and in the morning before the open:
-    - cron: '30 12 * * 1-5' # 08:30 EDT / 07:30 EST - the morning's filings
-    - cron: '45 21 * * 1-5' # 17:45 EDT / 16:45 EST - right after the 16:00 close (and the day's bars: the 16:00 bar is final)
-    - cron: '30 2 * * 2-6'  # 22:30 EDT / 21:30 EST - the end of EDGAR's day (UTC: the next day)
-    #
-    # Daily bars - from December the US session runs 23 hours (20:00 ET to
-    # 19:00 ET the next day, closed 19:00-20:00). The day's bar is final only
-    # in that hour, so a run must land in it whichever clock is in force:
-    - cron: '30 23 * * 1-5' # 19:30 EDT - in the pause (18:30 EST: too early, the next one covers winter)
-    - cron: '30 0 * * 2-6'  # 19:30 EST - in the pause (20:30 EDT: the next session has opened; yesterday's bar is final anyway)
+    # cron is UTC; Taipei is UTC+8 all year: 08:00, 11:00, 14:00, 17:00,
+    # 20:00, 23:00, 02:00, 05:00 Taipei. Reports reach MOPS through the day and
+    # into the evening after board meetings (most in the last days before the
+    # deadlines: Q1 May 15, Q2 Aug 14, Q3 Nov 14, annual Mar 31); the 17:00
+    # run has the day's bars (final after 14:30).
+    - cron: '0 */3 * * *'
   workflow_dispatch:
     inputs:
-      enrich_cover_shares:
-        description: 'Safely enrich historical filing cover shares (one-time; ~one SEC request per CIK)'
+      fetch_budget:
+        description: 'Minutes to spend fetching reports from MOPS in this run (~15 reports a minute; all ~1,000 companies × 12 quarters take about 15 hours in total)'
         required: false
-        type: boolean
-        default: false
+        default: '60'
 
 permissions:
   contents: write
@@ -61,25 +54,35 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 340
     env:
-      SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT || 'Mason mason276752@gmail.com' }}
       STOCKSCAN_STORE: ${{ github.workspace }}/data-repo/data/store
       STOCKSCAN_BARS: ${{ github.workspace }}/data-repo/data/bars
       STOCKSCAN_CRAWL: '0'
+      STOCKSCAN_FETCH_BUDGET: ${{ inputs.fetch_budget || '60' }}
+      STOCKSCAN_MOPS_PARALLEL: '8'
       IB_ENABLED: '0'
       TV_ENABLED: '0'
     steps:
       - uses: actions/checkout@v4
       # the data ref, beside the code (tip only; the token lets the step
-      # further down push a new commit to it)
+      # further down push a new commit to it). A repository without one yet
+      # starts an empty history that the first push creates.
       - name: Fetch the data ref
         run: |
           git init -q data-repo
           cd data-repo
           git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
-          git fetch -q --depth=1 --no-tags origin refs/data/main
-          git checkout -q FETCH_HEAD
-          echo "data ref $(git rev-parse --short HEAD): $(git log -1 --format=%s)"
+          if git ls-remote --exit-code origin refs/data/main > /dev/null; then
+            git fetch -q --depth=1 --no-tags origin refs/data/main
+            git checkout -q FETCH_HEAD
+            echo "data ref $(git rev-parse --short HEAD): $(git log -1 --format=%s)"
+          else
+            echo "no refs/data/main yet: starting an empty data history"
+            git checkout -q --orphan data
+            mkdir -p data/store data/bars
+            printf 'data/bars/**/head.zst\n*.tmp\n' > .gitignore
+          fi
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -90,11 +93,10 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm --prefix web ci
 
-      # the small SQLite cache (market snapshot, crawl bookkeeping …) survives
-      # between runs so only what its TTLs say is stale gets fetched again.
-      # What the build needs from SEC beyond that (ETF list, CUSIP table,
-      # N-PORT filings) lives as files in the store itself (data/store/kv,
-      # see store.js DURABLE_KV) and so comes with the data ref.
+      # the small SQLite cache (market snapshot, TWSE's latest quarters, crawl
+      # bookkeeping …) survives between runs so only what its TTLs say is
+      # stale gets fetched again. What the next run must know (the listed
+      # table, the reports MOPS does not have) lives in the store itself.
       - name: Restore the cache database
         uses: actions/cache@v4
         with:
@@ -102,22 +104,15 @@ jobs:
           key: cache-sqlite-${{ github.run_id }}
           restore-keys: cache-sqlite-
 
-      # scheduled / manual runs: top the store up with the newest filings
-      - name: Fetch new filings from EDGAR
+      # scheduled / manual runs: the listed table, then the reports
+      - name: Fetch new reports from MOPS
         if: github.event_name != 'push'
         run: npm run fetch:new
 
-      # One-time, opt-in data-ref migration for filings saved before the
-      # parser persisted cover shares. It never replaces parser values and
-      # rejects ambiguous companyconcept rows.
-      - name: Enrich historical cover shares
-        if: github.event_name == 'workflow_dispatch' && inputs.enrich_cover_shares
-        run: npm run enrich:cover-shares
-
       # this year's bars (head.zst of every symbol): restored from the last
       # run's cache, topped up from TradingView on scheduled / manual runs
-      # (one request per symbol, ~12 min the first time after a close, a
-      # minute when they are already fresh), saved for the next run. A push
+      # (one request per symbol, a few minutes the first time after a close,
+      # a minute when they are already fresh), saved for the next run. A push
       # only rebuilds with the bars the last such run left in the cache -
       # unless there is no such cache (evicted, or the earlier runs failed
       # before saving one): then it fetches too, or the site would go out
@@ -162,12 +157,13 @@ jobs:
       # scores the store lacks for the current SCORE_VERSION (a bump in the
       # commit being built): every build, so the site never goes out without
       # scores; a scheduled run has already pushed them with the data ref
-      - name: Score filings the store has not scored yet
+      - name: Score reports the store has not scored yet
         run: npm run rescore
 
       # the heavy parts run in the committed Linux binary of tools/stockscan-static
       # (bin/stockscan-static-x86_64-linux, rebuilt with build-linux.sh - nothing
-      # is compiled here); --link: the store goes into the site as hard links
+      # is compiled here); --link: the store goes into the site as hard links.
+      # The listed table and the market snapshot are refreshed here as well.
       - name: Build the static site
         run: |
           chmod +x tools/stockscan-static/bin/stockscan-static-x86_64-linux

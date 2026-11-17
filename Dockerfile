@@ -1,4 +1,4 @@
-# stockscan: Node server (SEC iXBRL scraper + API) serving the built Vue app.
+# stockscan-tw: Node server (MOPS iXBRL scraper + API) serving the built Vue app.
 # node:sqlite needs Node 22.13+ / 24; the image is Node 24.
 
 # ---- build the web app ----
@@ -29,8 +29,8 @@ COPY --from=web /src/web/assets ./web/assets
 RUN mkdir -p /app/data && chown -R node:node /app/data
 USER node
 VOLUME ["/app/data"]
-# PORT / BASE_URL / SEC_USER_AGENT / STOCKSCAN_CRAWL / TV_ENABLED / IB_* : see README
-ENV PORT=3000 STOCKSCAN_STORE=/app/data/store STOCKSCAN_CACHE=/app/data/cache.sqlite STOCKSCAN_BARS=/app/data/bars STOCKSCAN_DB=/app/data/stockscan.sqlite
+# PORT / BASE_URL / STOCKSCAN_CRAWL / STOCKSCAN_DEPTH / TV_ENABLED / IB_* : see README
+ENV PORT=3000 STOCKSCAN_STORE=/app/data/store STOCKSCAN_CACHE=/app/data/cache.sqlite STOCKSCAN_BARS=/app/data/bars
 EXPOSE 3000
 HEALTHCHECK --interval=60s --timeout=10s --start-period=30s \
   CMD wget -qO- "http://127.0.0.1:${PORT}${BASE_URL:-}/api/status" > /dev/null || exit 1

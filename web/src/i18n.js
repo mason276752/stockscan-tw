@@ -19,7 +19,7 @@ export const LOCALES = [
 const browserLocale = () => ((navigator.languages?.[0] || navigator.language || '').toLowerCase().startsWith('zh') ? 'zh' : 'en');
 let saved = null;
 try {
-  saved = localStorage.getItem('stockscan.lang');
+  saved = localStorage.getItem('stockscan-tw.lang');
 } catch {
   /* no storage */
 }
@@ -29,7 +29,7 @@ watch(
   locale,
   (v) => {
     try {
-      localStorage.setItem('stockscan.lang', v);
+      localStorage.setItem('stockscan-tw.lang', v);
     } catch {
       /* no storage */
     }

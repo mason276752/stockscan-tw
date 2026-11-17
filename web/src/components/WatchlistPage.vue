@@ -196,7 +196,7 @@ async function addFromSearch(ticker) {
                 <td><ScoreBadge :score="scores[x.cik] ?? null" /></td>
                 <td v-for="(c, i) in CATS" :key="c" class="num small hide-p" :class="catCls(scores[x.cik]?.categories?.[i])">{{ scores[x.cik]?.categories?.[i] ?? '—' }}</td>
                 <td class="small hide-p">
-                  <template v-if="scores[x.cik]">{{ scores[x.cik].form }} {{ scores[x.cik].fiscalYear }} {{ scores[x.cik].fiscalPeriod }} <span class="muted">{{ t('meta.periodEnd') }} {{ scores[x.cik].periodEnd }}</span></template>
+                  <template v-if="scores[x.cik]">{{ scores[x.cik].fiscalYear }} {{ scores[x.cik].fiscalPeriod }} <span class="muted">{{ t('meta.periodEnd') }} {{ scores[x.cik].periodEnd }}</span></template>
                   <span v-else class="muted">{{ t('wl.notDownloaded') }}</span>
                 </td>
                 <td class="small hide-t">{{ scores[x.cik]?.filingDate || '—' }}</td>

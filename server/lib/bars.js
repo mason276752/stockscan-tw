@@ -54,10 +54,10 @@ async function sources() {
 }
 const enabledSources = () => [...(tvStatus().enabled ? ['tv'] : []), ...(ibStatus().enabled ? ['ib'] : []), 'yahoo'];
 
-// Daily bars only change while the US session runs (today's bar is forming);
-// after the close nothing moves until the next open. A saved series is fresh
-// for BARS_TTL, or - when it was fetched after the last close - until the
-// next session opens. (Weekends handled; holidays just refetch once.)
+// Daily bars only change while TWSE trades (today's bar is forming); after
+// the close nothing moves until the next open. A saved series is fresh for
+// BARS_TTL, or - when it was fetched after the last close - until the next
+// session opens. (Weekends handled; holidays just refetch once.)
 function barsFresh(saved) {
   const fetchedAt = Date.parse(saved?.fetchedAt || 0);
   if (!fetchedAt) return false;
@@ -66,35 +66,34 @@ function barsFresh(saved) {
   // fetched after the last settled close, and no session has opened since then
   return fetchedAt >= lastClose(now) + 15 * 60_000 && now < nextOpen(fetchedAt);
 }
-// US session bounds in UTC: 9:30-16:00 New York (offset from the zone name so DST is right)
-const NY = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', weekday: 'short' });
-function nyParts(t) {
-  const p = Object.fromEntries(NY.formatToParts(new Date(t)).map((x) => [x.type, x.value]));
-  const local = Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day), Number(p.hour) % 24, Number(p.minute));
-  return { offset: local - Math.floor(t / 60_000) * 60_000, weekday: p.weekday, dayStart: local - (local % 86_400_000) };
+// TWSE session bounds: 09:00-13:30 Taipei (UTC+8 all year)
+const TPE = 8 * 3_600_000;
+function tpeDay(t) {
+  const local = t + TPE;
+  return { dayStart: local - (local % 86_400_000) - TPE, weekday: new Date(local).getUTCDay() };
 }
-// the most recent 16:00 New York on a weekday at or before t (as a UTC timestamp)
+// the most recent 13:30 Taipei on a weekday at or before t (as a UTC timestamp)
 export function lastClose(t) {
   for (let back = 0; back < 7; back++) {
-    const { offset, weekday, dayStart } = nyParts(t - back * 86_400_000);
-    if (weekday === 'Sat' || weekday === 'Sun') continue;
-    const close = dayStart + 16 * 3_600_000 - offset;
+    const { dayStart, weekday } = tpeDay(t - back * 86_400_000);
+    if (weekday === 0 || weekday === 6) continue;
+    const close = dayStart + 13.5 * 3_600_000;
     if (close <= t) return close;
   }
   return t;
 }
-// the next 9:30 New York on a weekday after t
+// the next 09:00 Taipei on a weekday after t
 export function nextOpen(t) {
   for (let ahead = 0; ahead < 7; ahead++) {
-    const { offset, weekday, dayStart } = nyParts(t + ahead * 86_400_000);
-    if (weekday === 'Sat' || weekday === 'Sun') continue;
-    const open = dayStart + 9.5 * 3_600_000 - offset;
+    const { dayStart, weekday } = tpeDay(t + ahead * 86_400_000);
+    if (weekday === 0 || weekday === 6) continue;
+    const open = dayStart + 9 * 3_600_000;
     if (open > t) return open;
   }
   return t;
 }
 const SOURCE_NAME = { tv: 'TradingView', ib: 'IBKR', yahoo: 'Yahoo Finance' };
-const CACHE_KEY = { tv: 'tv2', ib: 'ib', yahoo: 'yahoo' }; // directory per source under data/bars (tv2: before the US-listing check the series could be another country's)
+const CACHE_KEY = { tv: 'tv2', ib: 'ib', yahoo: 'yahoo' }; // directory per source under data/bars
 const OVERLAP = 7; // calendar days re-fetched behind the last saved bar, to check the history still lines up
 
 // the whole series, or (since = 'yyyy-mm-dd') only the bars from that day on
@@ -102,9 +101,9 @@ async function fetchFrom(source, symbol, since = null) {
   const calendarDays = since ? Math.ceil((Date.now() - Date.parse(since)) / 86_400_000) + 2 : null;
   if (source === 'tv') {
     const r = await tvDailyBars(symbol, since ? { bars: calendarDays } : {});
-    return { symbol, source: 'TradingView', currency: r.currency || 'USD', resolved: r.resolved, days: since ? r.days.filter((d) => d.date >= since) : r.days };
+    return { symbol, source: 'TradingView', currency: r.currency || 'TWD', resolved: r.resolved, days: since ? r.days.filter((d) => d.date >= since) : r.days };
   }
-  if (source === 'ib') return { symbol, source: 'IBKR', currency: 'USD', days: await ibDailyBars(symbol, since ? { days: calendarDays } : { years: YEARS }) };
+  if (source === 'ib') return { symbol, source: 'IBKR', currency: 'TWD', days: await ibDailyBars(symbol, since ? { days: calendarDays } : { years: YEARS }) };
   const { days, currency } = await yahooDailyBars(symbol, since);
   return { symbol, source: 'Yahoo Finance', currency, days };
 }

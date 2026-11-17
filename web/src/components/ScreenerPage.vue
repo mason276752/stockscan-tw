@@ -2,11 +2,11 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { api } from '../api';
 import ScoreBadge from './ScoreBadge.vue';
-import SicPicker from './SicPicker.vue';
+import IndustryPicker from './IndustryPicker.vue';
 import { isWatched, toggleWatch } from '../watchlist';
 import { applySource, basketOf, createBasket, setSource } from '../baskets';
-import { bigMoney, dateLocale, isZh, pick, t, tr } from '../i18n';
-import { sicInfo } from '../../../server/lib/sic.js';
+import { dateLocale, isZh, pick, t, tr } from '../i18n';
+import { industryInfo } from '../../../server/lib/industry.js';
 import { isNarrow, isPhone } from '../viewport';
 import Note from './Note.vue';
 import Loading from './Loading.vue';
@@ -16,15 +16,14 @@ import Loading from './Loading.vue';
 const props = defineProps({ params: { type: Object, default: () => ({}) } });
 const emit = defineEmits(['open', 'basket', 'navigate']);
 
-const meta = ref(null); // { fields, divisions, filer, market }
-const sic = ref(null); // /api/browse/sic
+const meta = ref(null); // { fields, industries, market }
+const industry = ref(null); // /api/browse/industry (codes with company counts)
+const divisions = computed(() => meta.value?.industries?.divisions || []);
 const text = ref('');
 const division = ref('');
-const sicCode = ref('');
-const afs = ref('');
-const listedOnly = ref(true);
+const indCode = ref('');
 const exDivisions = ref([]); // division ids to leave out
-const exSics = ref([]); // SIC codes to leave out, one dropdown row each
+const exInds = ref([]); // industry codes to leave out, one dropdown row each
 // condition rows: { key, mode: 'now' | 'chg' | 'yoy', min, max }
 //   now = the latest filing's figure; chg = change since the previous filing;
 //   yoy = change since the same period a year earlier
@@ -49,11 +48,9 @@ function toUrlParams() {
   if (editing.value) p.basket = editing.value.id;
   if (text.value.trim()) p.q = text.value.trim();
   if (division.value) p.division = division.value;
-  if (sicCode.value) p.sic = sicCode.value;
-  if (afs.value) p.afs = afs.value;
-  if (!listedOnly.value) p.listed = '0';
+  if (indCode.value) p.industry = indCode.value;
   if (exDivisions.value.length) p.exdiv = exDivisions.value.join(',');
-  if (exSics.value.filter(Boolean).length) p.exsic = exSics.value.filter(Boolean).join(',');
+  if (exInds.value.filter(Boolean).length) p.exind = exInds.value.filter(Boolean).join(',');
   const cond = conditions.value.filter((c) => c.key).map((c) => [c.key, MODES[c.mode] || '', c.min ?? '', c.max ?? ''].join(':'));
   if (cond.length) p.cond = cond.join(';');
   if (sortKey.value !== 'score' || sortDir.value !== 'desc' || sortMode.value !== 'now') {
@@ -68,11 +65,9 @@ function applyUrlParams(p) {
   applying = true;
   text.value = p.q || '';
   division.value = p.division || '';
-  sicCode.value = p.sic || '';
-  afs.value = p.afs || '';
-  listedOnly.value = p.listed !== '0';
+  indCode.value = p.industry || '';
   exDivisions.value = p.exdiv ? String(p.exdiv).split(',').filter(Boolean) : [];
-  exSics.value = p.exsic ? String(p.exsic).split(',').filter(Boolean) : [];
+  exInds.value = p.exind ? String(p.exind).split(',').filter(Boolean) : [];
   if (p.cond != null) {
     conditions.value = String(p.cond)
       .split(';')
@@ -114,8 +109,7 @@ watch(
 // (amounts already scaled to dollars): turn them back into filters
 function legacyParams(p) {
   const out = {};
-  for (const k of ['q', 'division', 'sic', 'afs', 'exdiv', 'exsic']) if (p[k]) out[k] = p[k];
-  if (p.listed === '0') out.listed = '0';
+  for (const k of ['q', 'division', 'industry', 'exdiv', 'exind']) if (p[k]) out[k] = p[k];
   const cond = {};
   for (const [k, v] of Object.entries(p)) {
     const m = /^(.+?)(?:_(chg|yoy))?_(min|max)$/.exec(k);
@@ -137,8 +131,8 @@ function stopEditing() {
 }
 function basketLabel() {
   const parts = [];
-  if (sicCode.value) parts.push(sicCode.value);
-  else if (division.value) parts.push(pick(meta.value?.divisions?.find((d) => d.id === division.value), 'zh', 'en') || division.value);
+  if (indCode.value) parts.push(pick(industryInfo(indCode.value), 'zh', 'title') || indCode.value);
+  else if (division.value) parts.push(pick(divisions.value.find((d) => d.id === division.value), 'zh', 'title') || division.value);
   const cond = conditions.value.filter((c) => c.key && (c.min !== '' || c.max !== '')).map((c) => `${shortName(fieldOf(c.key)?.name || c.key)}${c.mode === 'chg' ? t('sr.chgShort') : c.mode === 'yoy' ? t('sr.yoyShort') : ''}${c.min !== '' ? `≥${c.min}` : ''}${c.max !== '' ? `≤${c.max}` : ''}`);
   return [...parts, ...cond].join(' ') || t('nav.screen');
 }
@@ -180,11 +174,7 @@ const fieldGroups = computed(() => {
   }
   return out;
 });
-const sicOptions = computed(() => {
-  if (!sic.value) return [];
-  const d = division.value ? sic.value.divisions.find((x) => x.id === division.value) : null;
-  return sic.value.codes.filter((c) => (listedOnly.value ? c.listed : c.total) && (!d || c.division === d.id)).sort((a, b) => a.code.localeCompare(b.code));
-});
+const indOptions = computed(() => (industry.value ? industry.value.codes.filter((c) => c.total && (!division.value || c.division === division.value)).sort((a, b) => a.code.localeCompare(b.code)) : []));
 // change filters compare with earlier filings: market figures have none
 const modesFor = (key) => (fieldOf(key)?.market ? ['now'] : ['now', 'chg', 'yoy']);
 const isPct = (key) => fieldOf(key)?.unit === '百萬' || fieldOf(key)?.unit === '百萬股' || key === 'score'; // changes shown as % growth
@@ -193,16 +183,15 @@ const unitLabel = (f) => (f.unit ? ` (${tr(f.unit)})` : '');
 // amounts are entered in millions; percentages / ratios as shown; changes in % or points
 const scale = (c) => (c.mode !== 'now' ? 1 : fieldOf(c.key)?.unit === '百萬' || fieldOf(c.key)?.unit === '百萬股' ? 1e6 : 1);
 const params = computed(() => {
-  const p = { sort: sortKey.value, dir: sortDir.value, limit: 500, listed: listedOnly.value ? '1' : '0' };
+  const p = { sort: sortKey.value, dir: sortDir.value, limit: 500 };
   if (sortMode.value !== 'now') p.sortmode = sortMode.value;
   // a change column is shown (a condition in chg / yoy mode, even before it has a number): the rows need prev / yoy
   if (conditions.value.some((c) => c.key && c.mode !== 'now')) p.history = '1';
   if (text.value.trim()) p.q = text.value.trim();
   if (division.value) p.division = division.value;
-  if (sicCode.value) p.sic = sicCode.value;
-  if (afs.value) p.afs = afs.value;
+  if (indCode.value) p.industry = indCode.value;
   if (exDivisions.value.length) p.exdiv = exDivisions.value.join(',');
-  if (exSics.value.filter(Boolean).length) p.exsic = exSics.value.filter(Boolean).join(',');
+  if (exInds.value.filter(Boolean).length) p.exind = exInds.value.filter(Boolean).join(',');
   for (const c of conditions.value) {
     if (!c.key) continue;
     const suffix = c.mode === 'now' ? '' : `_${c.mode}`;
@@ -239,13 +228,13 @@ function removeCondition(i) {
 function reset() {
   applyUrlParams({});
 }
-// every SIC with a company, for the exclusion pickers
-const allSicOptions = computed(() => (sic.value ? sic.value.codes.filter((c) => (listedOnly.value ? c.listed : c.total)).sort((a, b) => a.code.localeCompare(b.code)) : []));
-function addExSic() {
-  exSics.value.push('');
+// every industry with a company, for the exclusion pickers
+const allIndOptions = computed(() => (industry.value ? industry.value.codes.filter((c) => c.total).sort((a, b) => a.code.localeCompare(b.code)) : []));
+function addExInd() {
+  exInds.value.push('');
 }
-function removeExSic(i) {
-  exSics.value.splice(i, 1);
+function removeExInd(i) {
+  exInds.value.splice(i, 1);
 }
 function toggleExDivision(id) {
   const i = exDivisions.value.indexOf(id);
@@ -267,7 +256,7 @@ const STAPLES = ['price', 'marketCap', 'pe', 'grossMargin', 'opMargin', 'netMarg
 const STAPLES_PHONE = ['price', 'marketCap', 'pe'];
 // small screens: the filter panel is a drawer above the results
 const filtersOpen = ref(false);
-const activeConditions = computed(() => conditions.value.filter((c) => c.key && (c.min !== '' || c.max !== '')).length + (division.value ? 1 : 0) + (sicCode.value ? 1 : 0) + (afs.value ? 1 : 0) + exDivisions.value.length + exSics.value.filter(Boolean).length + (text.value.trim() ? 1 : 0));
+const activeConditions = computed(() => conditions.value.filter((c) => c.key && (c.min !== '' || c.max !== '')).length + (division.value ? 1 : 0) + (indCode.value ? 1 : 0) + exDivisions.value.length + exInds.value.filter(Boolean).length + (text.value.trim() ? 1 : 0));
 const columns = computed(() => {
   const out = [];
   const seen = new Set();
@@ -302,7 +291,6 @@ function fmt(field, v) {
     case '股':
       return f0.format(v);
     case '元':
-    case '美元':
       return f2.format(v);
     case '百萬':
     case '百萬股':
@@ -331,13 +319,12 @@ const shortName = (name) =>
     .replace(/（.*?）|\s*\(.*?\)/g, '')
     .replace(/ [①②]|\s*[①②]\/[①②]|\s*[①②]−[①②]/g, '');
 const colTitle = (col) => `${shortName(col.field.name)}${col.mode === 'chg' ? ` ${t('sr.chgShort')}` : col.mode === 'yoy' ? ` ${t('sr.yoyLong')}` : ''}`;
-const sicName = (r) => (isZh.value ? r.sicZh || '' : sicInfo(r.sic)?.title || r.sicZh || '');
-const afsShort = (k) => (['LAF', 'ACC', 'NON'].includes(k) ? t(`afs.${k}`) : '');
+const industryName = (r) => (isZh.value ? r.industryZh || '' : industryInfo(r.industry)?.title || r.industryZh || '');
 
 onMounted(async () => {
   applyUrlParams(props.params || {});
   try {
-    [meta.value, sic.value] = await Promise.all([api.screenFields(), api.browseSic()]);
+    [meta.value, industry.value] = await Promise.all([api.screenFields(), api.browseIndustry()]);
   } catch (e) {
     error.value = e.message;
   }
@@ -359,34 +346,26 @@ onMounted(async () => {
         </label>
         <label class="frow">
           <span>{{ t('sr.division') }}</span>
-          <select v-model="division" @change="sicCode = ''">
+          <select v-model="division" @change="indCode = ''">
             <option value="">{{ t('wl.all') }}</option>
-            <option v-for="d in meta?.divisions || []" :key="d.id" :value="d.id">{{ d.id }} · {{ pick(d, 'zh', 'en') }}</option>
+            <option v-for="d in divisions" :key="d.id" :value="d.id">{{ pick(d, 'zh', 'title') }}</option>
           </select>
         </label>
         <label class="frow">
-          <span>{{ t('col.sic') }}</span>
-          <SicPicker v-model="sicCode" :codes="sicOptions" :divisions="meta?.divisions || []" :count-key="listedOnly ? 'listed' : 'total'" :placeholder="t('sr.sicPlaceholder')" />
+          <span>{{ t('col.industry') }}</span>
+          <IndustryPicker v-model="indCode" :codes="indOptions" :divisions="divisions" :placeholder="t('sr.industryPlaceholder')" />
         </label>
-        <label class="frow">
-          <span>{{ t('col.afs') }}</span>
-          <select v-model="afs">
-            <option value="">{{ t('wl.all') }}</option>
-            <option v-for="(v, k) in meta?.filer || {}" :key="k" :value="k">{{ pick(v, 'zh', 'label') }}</option>
-          </select>
-        </label>
-        <label class="frow check"><input v-model="listedOnly" type="checkbox" /> {{ t('listedOnly') }}</label>
 
         <div class="side-head">{{ t('sr.exclude') }}</div>
         <div class="chips">
-          <button v-for="d in meta?.divisions || []" :key="d.id" class="chip" :class="{ on: exDivisions.includes(d.id) }" :title="t('sr.excludeTitle', { d: `${d.id} ${pick(d, 'zh', 'en')}` })" @click="toggleExDivision(d.id)">{{ pick(d, 'zh', 'en') }}</button>
+          <button v-for="d in divisions" :key="d.id" class="chip" :class="{ on: exDivisions.includes(d.id) }" :title="t('sr.excludeTitle', { d: pick(d, 'zh', 'title') })" @click="toggleExDivision(d.id)">{{ pick(d, 'zh', 'title') }}</button>
         </div>
-        <div v-for="(code, i) in exSics" :key="i" class="exrow">
-          <SicPicker v-model="exSics[i]" :codes="allSicOptions" :divisions="meta?.divisions || []" :count-key="listedOnly ? 'listed' : 'total'" :placeholder="t('sr.exSicPlaceholder')" />
-          <button class="mini" :title="t('remove')" @click="removeExSic(i)">✕</button>
+        <div v-for="(code, i) in exInds" :key="i" class="exrow">
+          <IndustryPicker v-model="exInds[i]" :codes="allIndOptions" :divisions="divisions" :placeholder="t('sr.exIndustryPlaceholder')" />
+          <button class="mini" :title="t('remove')" @click="removeExInd(i)">✕</button>
         </div>
         <div class="actions">
-          <button class="mini" @click="addExSic">{{ t('sr.addExSic') }}</button>
+          <button class="mini" @click="addExInd">{{ t('sr.addExIndustry') }}</button>
         </div>
 
         <div class="side-head">{{ t('sr.conditions') }}</div>
@@ -448,18 +427,17 @@ onMounted(async () => {
                 <th v-for="col in columns" :key="col.id" class="num sortable" :class="{ chg: col.mode !== 'now' }" :title="tr(col.field.name) + (col.mode === 'chg' ? t('sr.chgParen') : col.mode === 'yoy' ? t('sr.yoyParen') : '')" @click="sortBy(col.field.key, col.mode)">
                   {{ colTitle(col) }}<span v-if="col.mode === 'now' && (col.field.unit === '百萬' || col.field.unit === '百萬股')" class="muted"> {{ tr('百萬') }}</span>{{ arrow(col.field.key, col.mode) }}
                 </th>
-                <th class="sortable num hide-p" @click="sortBy('float')">{{ t('col.float') }}{{ arrow('float') }}</th>
+
               </tr>
             </thead>
             <tbody>
               <tr v-for="r in result.rows" :key="r.cik" class="row" @click="emit('open', r)">
                 <td class="star" @click.stop="toggleWatch(r)"><span :class="{ on: isWatched(r.cik) }">{{ isWatched(r.cik) ? '★' : '☆' }}</span></td>
-                <td class="mono"><a :href="`?company=${r.ticker || r.cik}`" @click.prevent>{{ r.ticker || `CIK ${r.cik}` }}</a></td>
-                <td class="name">{{ r.name }}<span class="muted small afs hide-p"> {{ afsShort(r.afs) }}</span></td>
-                <td class="small hide-p">{{ r.sic }} {{ sicName(r) }}</td>
+                <td class="mono"><a :href="`?company=${r.ticker}`" @click.prevent>{{ r.ticker }}</a></td>
+                <td class="name">{{ r.name }}</td>
+                <td class="small hide-p">{{ industryName(r) }}</td>
                 <td><ScoreBadge :score="r.score" /></td>
                 <td v-for="col in columns" :key="col.id" class="num" :class="{ neg: cell(r, col).neg, pos: cell(r, col).pos, chg: col.mode !== 'now' }" :title="cell(r, col).title || ''">{{ cell(r, col).text }}</td>
-                <td class="num small hide-p">{{ bigMoney(r.float) }}</td>
               </tr>
             </tbody>
           </table>
@@ -610,9 +588,6 @@ td.neg {
 .name {
   white-space: normal;
   min-width: 180px;
-}
-.afs {
-  margin-left: 4px;
 }
 tr.row {
   cursor: pointer;

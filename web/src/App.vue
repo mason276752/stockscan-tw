@@ -23,7 +23,7 @@ import { drop, prefetch, setBusy } from './prefetch';
 import { memoize } from './memo';
 import { isWatched, toggleWatch, watchlist } from './watchlist';
 import { baskets } from './baskets';
-import { bigMoney, dateLocale, isZh, locale, LOCALES, pick, t } from './i18n';
+import { dateLocale, isZh, locale, LOCALES, t } from './i18n';
 
 // background crawl progress (server-side), shown in the header
 const status = ref(null);
@@ -43,13 +43,12 @@ const crawlText = computed(() => {
   const c = status.value?.crawler;
   if (!c?.enabled) return '';
   const saved = status.value.store.filings.toLocaleString();
-  const watchNote = c.lastWatch ? t('crawl.watchNote', { time: new Date(c.lastWatch).toLocaleTimeString(dateLocale.value), watched: c.watched ? t('crawl.watched', { n: c.watched }) : '' }) : '';
-  if (c.phase === 'sweep') return t('crawl.sweep', { depth: c.depth || 5, position: c.position.toLocaleString(), total: c.total.toLocaleString(), current: c.current ? ` · ${c.current}` : '', saved, watch: watchNote });
-  if (c.phase === 'watch') return t('crawl.watch', { saved, watch: watchNote });
+  if (c.phase === 'pass') return t('crawl.pass', { depth: c.depth, position: c.position.toLocaleString(), total: c.total.toLocaleString(), current: c.current ? ` · ${c.current}` : '', saved, added: c.saved });
+  if (c.lastPass) return t('crawl.idle', { saved, time: new Date(c.lastPass).toLocaleTimeString(dateLocale.value) });
   return '';
 });
 
-// page: 'report' (statements of one company) | 'browse' (industry / filer status / ETF lists) | 'watch' (watchlist)
+// page: 'report' (statements of one company) | 'browse' (industry lists) | 'watch' (watchlist)
 //       | 'screen' (screener) | 'basket' (custom ETF charts)
 const page = ref('report');
 const browseParams = ref({});
@@ -73,8 +72,8 @@ const loadingCompany = ref(false);
 const refreshing = ref(false);
 const refreshMessage = ref('');
 
-// Re-read the filing list from SEC (bypassing the 10-minute cache) - for the
-// day a new 10-Q / 10-K comes out.
+// Re-read the company's report list - for the day a new quarter's report
+// comes out on MOPS.
 async function refreshFilings() {
   if (!company.value || refreshing.value) return;
   refreshing.value = true;
@@ -85,7 +84,7 @@ async function refreshFilings() {
     const added = fresh.filings.filter((f) => !before.has(f.accession));
     company.value = fresh;
     refreshMessage.value = added.length
-      ? t('refresh.added', { n: added.length, list: added.map((f) => `${f.form} ${f.fiscalYear} ${f.fiscalPeriod}`).join(t('sep')) })
+      ? t('refresh.added', { n: added.length, list: added.map((f) => periodName(f)).join(t('sep')) })
       : t('refresh.none', { time: new Date(fresh.filingsUpdatedAt).toLocaleTimeString(dateLocale.value) });
     if (added.length && !filing.value?.quartersYear) await loadFiling(added[0]);
   } catch (e) {
@@ -109,8 +108,8 @@ const showConcept = ref(false);
 // simple = the four primary statements show only their total columns; member
 // breakdowns (equity components, share classes, product lines) are hidden and
 // rolled up where the filer tagged a line only per member
-const simple = ref(localStorage.getItem('stockscan.simple') !== '0');
-watch(simple, (v) => localStorage.setItem('stockscan.simple', v ? '1' : '0'));
+const simple = ref(localStorage.getItem('stockscan-tw.simple') !== '0');
+watch(simple, (v) => localStorage.setItem('stockscan-tw.simple', v ? '1' : '0'));
 const view = ref('current'); // current = only the filing's own period | all = every column in the filing
 
 // financial indicators page
@@ -183,14 +182,14 @@ watch([tab, valuationParams], ([t, p], [, prev]) => {
 const isValuation = computed(() => tab.value === 'valuation');
 
 // K-line tab: TradingView's own chart of this one stock (its data, its
-// indicators); the exchange-qualified symbol comes from the market snapshot
-// so a bare ticker cannot resolve to another country's listing
+// indicators); the symbol is asked for on TWSE (TWSE:2330) so a bare number
+// cannot resolve to another market's listing
 const isChart = computed(() => tab.value === 'chart');
 const tvSymbol = ref(null);
-const chartRange = ref(localStorage.getItem('stockscan.krange') || '12M');
-const chartColors = ref(localStorage.getItem('stockscan.kcolors') || 'tw');
-watch(chartRange, (v) => localStorage.setItem('stockscan.krange', v));
-watch(chartColors, (v) => localStorage.setItem('stockscan.kcolors', v));
+const chartRange = ref(localStorage.getItem('stockscan-tw.krange') || '12M');
+const chartColors = ref(localStorage.getItem('stockscan-tw.kcolors') || 'tw');
+watch(chartRange, (v) => localStorage.setItem('stockscan-tw.krange', v));
+watch(chartColors, (v) => localStorage.setItem('stockscan-tw.kcolors', v));
 watch(
   [tab, company],
   async ([t, c]) => {
@@ -206,7 +205,7 @@ watch(
       const r = await cached.tvSymbol(ticker);
       if (company.value === c) tvSymbol.value = r;
     } catch {
-      if (company.value === c) tvSymbol.value = { ticker, symbol: ticker.replace(/-/g, '.'), known: false };
+      if (company.value === c) tvSymbol.value = { ticker, symbol: `TWSE:${ticker}`, known: false };
     }
   },
   { immediate: true },
@@ -255,10 +254,11 @@ const current = computed(() => {
 });
 
 function openBrowse(params) {
-  browseParams.value = { cat: 'sic', code: '', afs: '', etf: '', ...params };
+  browseParams.value = { industry: '', ...params };
   page.value = 'browse';
 }
-const fmtFloat = (v) => `${bigMoney(v)} ${t('usd')}`;
+// "2026 Q2" / "2025 年報"
+const periodName = (f) => (f.fiscalPeriod === 'FY' ? t('period.annual', { year: f.fiscalYear }) : `${f.fiscalYear} ${f.fiscalPeriod}`);
 
 // From the search box or a browse list: show the statements page for that company.
 function openCompany(idOrRow) {
@@ -303,7 +303,7 @@ async function loadFiling(f) {
   }
 }
 
-// Q4 derived view: Q1-Q3 from the 10-Qs, FY from the 10-K, Q4 = FY - Q1 - Q2 - Q3.
+// Q4 derived view: Q1-Q3 from the quarterly reports, FY from the annual report, Q4 = FY - Q1 - Q2 - Q3.
 async function loadQuarters(year) {
   error.value = null;
   loadingFiling.value = true;
@@ -424,7 +424,7 @@ function applyUrl() {
   if (p.get('view') === 'all') view.value = 'all';
   if (p.get('page') === 'browse') {
     page.value = 'browse';
-    browseParams.value = { cat: p.get('cat') || 'sic', code: p.get('code') || '', afs: p.get('afs') || '', etf: p.get('etf') || '' };
+    browseParams.value = { industry: p.get('industry') || '' };
     return;
   }
   if (p.get('page') === 'screen') {
@@ -440,7 +440,7 @@ function applyUrl() {
   }
   page.value = 'report';
   const id = p.get('company');
-  if (id && (!company.value || (!company.value.tickers.includes(id.toUpperCase()) && String(company.value.cik) !== id))) {
+  if (id && (!company.value || (!company.value.tickers.includes(id) && String(company.value.cik) !== id))) {
     loadCompany(id, p.get('accession'), p.get('quarters') ? Number(p.get('quarters')) : null);
   }
 }
@@ -462,7 +462,7 @@ onMounted(() => {
   <div class="app">
     <div v-if="busy.count" class="topbar" :class="{ known: download.total > 0 }" aria-hidden="true"><div v-if="download.total > 0" class="fill" :style="{ width: `${Math.round((100 * download.loaded) / download.total)}%` }"></div></div>
     <header>
-      <h1 class="logo">stockscan <span class="muted">{{ t('header.subtitle') }}</span></h1>
+      <h1 class="logo">stockscan-tw <span class="muted">{{ t('header.subtitle') }}</span></h1>
       <nav class="nav">
         <button :class="{ active: page === 'report' }" @click="page = 'report'">{{ t('nav.report') }}</button>
         <button :class="{ active: page === 'browse' }" @click="page = 'browse'">{{ t('nav.browse') }}</button>
@@ -498,20 +498,17 @@ onMounted(() => {
           {{ company.name }}
         </h2>
         <div class="muted small co-info">
-          {{ company.tickers.join(', ') }} · CIK {{ company.cik }}
-          <span v-if="company.fiscalYearEnd"> · {{ t('company.fye') }} {{ company.fiscalYearEnd.slice(0, 2) }}/{{ company.fiscalYearEnd.slice(2) }}</span>
-          <div v-if="company.sic">
-            <a :href="`?page=browse&cat=sic&code=${company.sic}`" :title="t('company.sameIndustry')" @click.prevent="openBrowse({ cat: 'sic', code: String(company.sic) })">
-              SIC {{ company.sic }} {{ isZh ? company.sicZh || company.sicDescription : company.sicDescription || company.sicZh }}
+          {{ company.ticker }}<span v-if="!isZh && company.nameEn"> · {{ company.nameEn }}</span><span v-if="company.fullName && company.fullName !== company.name"> · {{ company.fullName }}</span>
+          <div v-if="company.industry">
+            <a :href="`?page=browse&industry=${company.industry}`" :title="t('company.sameIndustry')" @click.prevent="openBrowse({ industry: company.industry })">
+              {{ isZh ? company.industryZh || company.industryTitle : company.industryTitle || company.industryZh }}
             </a>
-          </div>
-          <div v-if="company.filer?.filerStatus">
-            <a :href="`?page=browse&cat=filer&afs=${company.filer.afs}`" :title="t('company.sameFiler')" @click.prevent="openBrowse({ cat: 'filer', afs: company.filer.afs })">{{ pick(company.filer.filerStatus, 'zh', 'label') }}</a><span v-if="company.filer.wksi"> · WKSI</span>
-            <span v-if="company.filer.publicFloat != null"> · {{ t('company.publicFloat') }} {{ fmtFloat(company.filer.publicFloat) }}<span v-if="company.filer.publicFloatAdjusted" :title="t('company.floatAdjusted')">*</span>（{{ company.filer.publicFloatDate }}）</span>
+            <span v-if="company.listedDate"> · {{ t('company.listed', { date: company.listedDate }) }}</span>
+            <span v-if="company.foreign"> · {{ t('company.foreign', { country: company.foreign }) }}</span>
           </div>
         </div>
         <h3 class="pick-head" :class="{ fold: isPhone }" @click="isPhone && (pickerOpen = !pickerOpen)">
-          <span><span v-if="isPhone" class="caret">{{ pickerOpen ? '▾' : '▸' }}</span> {{ t('filings.pick') }}<span v-if="isPhone && !pickerOpen && filing" class="picked">{{ filing.form }} {{ filing.fiscalYear }} {{ filing.fiscalPeriod }}</span></span>
+          <span><span v-if="isPhone" class="caret">{{ pickerOpen ? '▾' : '▸' }}</span> {{ t('filings.pick') }}<span v-if="isPhone && !pickerOpen && filing" class="picked">{{ periodName(filing) }}</span></span>
           <button v-if="!isStatic" class="refresh" :disabled="refreshing" :title="t('filings.refreshTitle')" @click.stop="refreshFilings">
             <Loading v-if="refreshing" inline small :text="t('filings.refreshing')" /><template v-else>{{ t('filings.refresh') }}</template>
           </button>
@@ -525,7 +522,7 @@ onMounted(() => {
       </aside>
 
       <main>
-        <Loading v-if="loadingFiling" :text="t('loading.filing', { form: filing?.form, year: filing?.fiscalYear, period: filing?.fiscalPeriod })" />
+        <Loading v-if="loadingFiling" :text="t('loading.filing', { what: filing ? periodName(filing) : '' })" />
 
         <template v-if="data && !loadingFiling">
           <div class="panel meta">
@@ -534,21 +531,21 @@ onMounted(() => {
               · Q4 = FY − Q1 − Q2 − Q3 · {{ t('derived.sources') }}
               <template v-for="(src, p, i) in data.sources" :key="p">
                 <span v-if="i">{{ t('sep') }}</span>
-                <a :href="src.viewerUrl" target="_blank" rel="noopener">{{ p }} {{ src.form }}</a>
+                <a :href="src.viewerUrl" target="_blank" rel="noopener">{{ p }}</a>
               </template>
             </div>
             <div v-else>
-              <strong>{{ data.filing.form }}</strong>
-              {{ data.filing.fiscalPeriod === 'FY' ? `FY${data.filing.fiscalYear}` : `FY${data.filing.fiscalYear} ${data.filing.fiscalPeriod}` }} · {{ t('meta.periodEnd') }} {{ data.filing.periodEnd }} · {{ t('meta.filingDate') }} {{ data.filing.filingDate }}
+              <strong>{{ periodName(data.filing) }}</strong>
+              {{ t(`form.${data.filing.form}`) }}<span v-if="data.filing.reportId"> · {{ t(data.filing.consolidated ? 'report.consolidated' : 'report.individual') }}</span> · {{ t('meta.periodEnd') }} {{ data.filing.periodEnd }} · {{ t('meta.filingDate') }} {{ data.filing.filingDate }}
             </div>
             <div class="links">
-              <a v-if="!data.derived" :href="data.filing.viewerUrl" target="_blank" rel="noopener">{{ t('meta.secLink') }}</a>
+              <a v-if="!data.derived" :href="data.filing.viewerUrl" target="_blank" rel="noopener">{{ t('meta.sourceLink') }}</a>
               <a v-if="!isStatic" :href="jsonUrl" target="_blank" rel="noopener">JSON</a>
               <span class="muted small">{{ data.stats.facts }} facts<template v-if="data.stats.contexts"> · {{ data.stats.contexts }} contexts</template></span>
             </div>
           </div>
           <Note v-if="data.view === 'current' && !isIndicators && !isValuation && !isChart">
-            {{ t('note.current', { is: data.filing.form?.startsWith('10-Q') ? t('note.currentQ') : t('note.currentFY') }) }}
+            {{ t('note.current', { is: data.filing.form === 'QR' ? t('note.currentQ') : t('note.currentFY') }) }}
             <template v-if="data.previous">{{ t('note.previous', { year: data.previous.fiscalYear, period: data.previous.fiscalPeriod }) }}</template>
             <template v-for="n in data.notes.filter((x) => x.code === 'ytdOnly')" :key="n.title"> {{ t('note.ytdOnly', n) }}</template>
             {{ t('note.compare') }}
@@ -704,9 +701,9 @@ onMounted(() => {
     </div>
 
     <div v-else-if="!loadingCompany" class="empty muted">
-      {{ t('empty.start') }} <a href="?company=GOOGL" @click.prevent="loadCompany('GOOGL')">GOOGL</a>{{ t('sep') }}
-      <a href="?company=AAPL" @click.prevent="loadCompany('AAPL')">AAPL</a>{{ t('sep') }}
-      <a href="?company=TSM" @click.prevent="loadCompany('TSM')">TSM</a>{{ t('empty.comma') }}
+      {{ t('empty.start') }} <a href="?company=2330" @click.prevent="loadCompany('2330')">2330 {{ t('ex.2330') }}</a>{{ t('sep') }}
+      <a href="?company=3008" @click.prevent="loadCompany('3008')">3008 {{ t('ex.3008') }}</a>{{ t('sep') }}
+      <a href="?company=2412" @click.prevent="loadCompany('2412')">2412 {{ t('ex.2412') }}</a>{{ t('empty.comma') }}
       {{ t('empty.orBrowse') }} <a href="?page=browse" @click.prevent="page = 'browse'">{{ t('nav.browse') }}</a> {{ t('empty.browseTail') }}
       {{ t('empty.orScreen') }} <a href="?page=screen" @click.prevent="page = 'screen'">{{ t('nav.screen') }}</a> {{ t('empty.screenTail') }}
     </div>

@@ -3,22 +3,22 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { SecClient } from './lib/secClient.js';
+import { TwClient } from './lib/twClient.js';
 import { openStore, requireVersion, store } from './lib/store.js';
 import { createPrefetcher } from './lib/prefetch.js';
 import { createCrawler } from './lib/crawler.js';
-import { DEFAULT_FORMS, filingFromUrl, filingUrls, getCompany, listingOf, pickFiling, purgeDelisted, refreshTickers, searchCompanies } from './lib/edgar.js';
+import { getCompany, listingOf, pickFiling, searchCompanies } from './lib/companies.js';
+import { refreshListed, purgeDelisted } from './lib/twse.js';
+import { parseAccession } from './lib/filings.js';
 import { scrapeFiling, SCRAPE_VERSION } from './lib/scrape.js';
 import { buildQuarterly } from './lib/quarters.js';
 import { buildIndicators } from './lib/indicators.js';
 import { currentView } from './lib/current.js';
 import { serverValuation } from './lib/valuationServer.js';
 import { ITEMS as SCORE_ITEMS, SCORE_VERSION, latestScore, latestScores, scoreAccession, scoreUnscored } from './lib/score.js';
-import { SCREEN_FIELDS, browseCompanies, filerCounts, scoreBadge, screenQuery, screenRows, sicCounts, wantsMarket } from './lib/screen.js';
+import { SCREEN_FIELDS, browseCompanies, industryCounts, scoreBadge, screenQuery, screenRows, wantsMarket } from './lib/screen.js';
 import { marketSnapshot, marketStatus } from './lib/market.js';
-import { FILER_STATUS, SIC, getUniverse, lookupFiler, refreshUniverse, sicInfo, universeStale } from './lib/universe.js';
-import { POPULAR_ETFS, etfHoldings, etfList } from './lib/etf.js';
-import { liveHoldings } from './lib/liveHoldings.js';
+import { INDUSTRY, getUniverse } from './lib/universe.js';
 import { dailyBars } from './lib/bars.js';
 import { basketRequest, runBasket as runBasketWith } from './lib/basket.js';
 import { barStore, openBarStore } from './lib/barStore.js';
@@ -29,37 +29,32 @@ import { tvStatus } from './lib/tvws.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
 // BASE_URL: serve everything under a path prefix (behind a reverse proxy at
-// https://host/stockscan/ set BASE_URL=/stockscan). '' = the root.
+// https://host/stockscan-tw/ set BASE_URL=/stockscan-tw). '' = the root.
 const BASE = `/${String(process.env.BASE_URL || '').trim().replace(/^\/+|\/+$/g, '')}`.replace(/^\/$/, '');
 
-const client = new SecClient();
+const client = new TwClient();
 openStore();
 requireVersion(SCRAPE_VERSION);
 openBarStore();
 const prefetcher = createPrefetcher(client);
-// Background crawl of every ticker company's latest filing (STOCKSCAN_CRAWL=0 turns it off).
+// Background crawl of every listed company's reports from MOPS (STOCKSCAN_CRAWL=0 turns it off).
 const crawler = createCrawler(client, { prefetcher, enabled: !/^(0|false|no|off)$/i.test(process.env.STOCKSCAN_CRAWL || '1') });
-// Background crawl of every ticker's daily bars from TradingView, once a day after the close (STOCKSCAN_BARS_CRAWL=0 turns it off).
+// Background crawl of every listed company's daily bars from TradingView, once a day after the close (STOCKSCAN_BARS_CRAWL=0 turns it off).
 const barCrawler = createBarCrawler(client, { enabled: !/^(0|false|no|off)$/i.test(process.env.STOCKSCAN_BARS_CRAWL || '1') });
 
-// Ticker table: refresh in the background at startup and daily; the saved
-// copy serves searches meanwhile. Each refresh also drops the filings of
-// companies that have since left the table (delisted).
-const refresh = () =>
-  refreshTickers(client)
-    .then((rows) => {
-      console.log(`ticker table refreshed: ${rows.length} companies`);
-      purgeDelisted(rows);
-    })
-    .catch((e) => console.warn(`ticker refresh failed: ${e.message}`));
-setTimeout(refresh, 1000);
-setInterval(refresh, 24 * 3600 * 1000).unref();
-
-// Filer universe (SIC / filer status for the browse pages): build it in the
-// background when missing or older than a week, so the first visit is instant.
-setTimeout(() => {
-  if (universeStale()) refreshUniverse(client, 'low').catch((e) => console.warn(`universe build failed: ${e.message}`));
-}, 5000);
+// Listed-company table: refreshed in the background at startup (the crawler
+// then does it daily); the saved copy serves searches meanwhile. A refresh
+// also drops the reports of companies that have left the table (delisted).
+setTimeout(
+  () =>
+    refreshListed(client)
+      .then((rows) => {
+        console.log(`TWSE listed companies refreshed: ${rows.length}`);
+        purgeDelisted(rows);
+      })
+      .catch((e) => console.warn(`listed-company refresh failed: ${e.message}`)),
+  1000,
+);
 setTimeout(() => crawler.start(), 15_000);
 setTimeout(() => barCrawler.start(), 20_000);
 // market snapshot (price, market cap, multiples) for the screener: fetch at startup, refresh every half hour
@@ -100,8 +95,8 @@ function dedupe(key, fn) {
 
 const wrap = (fn) => (req, res, next) => fn(req, res, next).catch(next);
 
-// Scrape a filing and, with ?view=current, reduce it to its own period
-// (needs the previous 10-Q for year-to-date-only statements).
+// Fetch a report and, with ?view=current, reduce it to its own period
+// (needs the previous quarter's report for year-to-date-only statements).
 async function filingResponse(req, company, filing) {
   const data = await dedupe(filing.accession, () => scrapeFiling(client, filing, company));
   prefetcher.schedule(company, filing);
@@ -121,8 +116,8 @@ async function filingResponse(req, company, filing) {
   return currentView(data, filing, prev);
 }
 
-// GET /api/search?q=goog  -> ticker / company-name suggestions, each with the
-// latest-filing score when one is saved (so every search box can show it)
+// GET /api/search?q=台積  -> code / company-name suggestions, each with the
+// latest report's score when one is saved (so every search box can show it)
 app.get(
   '/api/search',
   wrap(async (req, res) => {
@@ -143,25 +138,20 @@ app.get(
   }),
 );
 
-// GET /api/company/GOOGL[?refresh=1]  -> company info + every Inline XBRL
-// 10-K/10-Q/20-F/40-F, newest first, each tagged with fiscalYear /
-// fiscalPeriod (FY, Q1-Q3). refresh=1 re-reads the filing list from SEC now.
+// GET /api/company/2330  -> company info + its reports, newest first, each
+// tagged with fiscalYear / fiscalPeriod (Q1-Q3, FY = the annual report)
 app.get(
   '/api/company/:id',
   wrap(async (req, res) => {
-    const forms = req.query.form ? String(req.query.form).split(',') : DEFAULT_FORMS;
-    const company = await getCompany(client, req.params.id, { forms, refresh: req.query.refresh === '1' });
-    // industry / filer status from the browse universe when it is already built
-    res.json({ ...company, sicZh: sicInfo(company.sic)?.zh || null, filer: lookupFiler(company.cik) });
+    res.json(await getCompany(client, req.params.id));
   }),
 );
 
-// GET /api/company/GOOGL/statements?year=2025&period=Q2   (no params = latest filing)
+// GET /api/company/2330/statements?year=2025&period=Q2   (no params = latest report)
 app.get(
   '/api/company/:id/statements',
   wrap(async (req, res) => {
-    const forms = req.query.form ? String(req.query.form).split(',') : DEFAULT_FORMS;
-    const company = await getCompany(client, req.params.id, { forms });
+    const company = await getCompany(client, req.params.id);
     const filing = pickFiling(company.filings, { year: req.query.year, period: req.query.period });
     if (!filing) {
       return res.status(404).json({
@@ -173,8 +163,8 @@ app.get(
   }),
 );
 
-// GET /api/company/GOOGL/quarters?year=2025 -> Q1..Q3 from the 10-Qs, FY from
-// the 10-K and Q4 derived as FY - Q1 - Q2 - Q3
+// GET /api/company/2330/quarters?year=2025 -> Q1..Q3 from the quarterly
+// reports, FY from the annual report and Q4 derived as FY - Q1 - Q2 - Q3
 app.get(
   '/api/company/:id/quarters',
   wrap(async (req, res) => {
@@ -186,7 +176,7 @@ app.get(
   }),
 );
 
-// GET /api/company/GOOGL/indicators?year=2023&period=Q3&n=20&basis=x4|ttm&mode=quarter|year|same
+// GET /api/company/2330/indicators?year=2023&period=Q3&n=20&basis=x4|ttm&mode=quarter|year|same
 // -> financial ratios for the 20 fiscal quarters ending at FY2023 Q3, or with
 //    mode=year, N years each made of the four quarters ending at that quarter
 //    (2022 Q4 + 2023 Q1..Q3, 2021 Q4 + 2022 Q1..Q3, ...); mode=same compares
@@ -207,7 +197,7 @@ app.get(
   }),
 );
 
-// GET /api/company/AAPL/valuation?year=2026&period=Q3&n=20 -> relative
+// GET /api/company/2330/valuation?year=2026&period=Q3&n=20 -> relative
 // multiples over the last N quarters (price at each quarter end) and absolute
 // models on the trailing four quarters at today's price
 app.get(
@@ -217,99 +207,48 @@ app.get(
     const period = String(req.query.period || 'FY').toUpperCase();
     if (!year || !/^(Q[1-4]|FY)$/.test(period)) return res.status(400).json({ error: 'year and period (Q1-Q4 or FY) required' });
     const n = Math.min(40, Math.max(4, Number(req.query.n) || 20));
-    const adr = Math.max(0.0001, Number(req.query.adr) || 1); // ordinary shares per listed share (ADR ratio)
+    const adr = Math.max(0.0001, Number(req.query.adr) || 1); // ordinary shares per listed share (1 for TWSE stocks)
     const company = await getCompany(client, req.params.id);
     res.json(await dedupe(`val:${company.cik}:${year}:${period}:${n}:${adr}`, () => serverValuation(client, company, { year, period, n, adr })));
   }),
 );
 
-// GET /api/filing/1652044/0001652044-26-000048[?view=current]  -> one specific
-// filing; view=current keeps only the filing's own period in every statement
+// GET /api/filing/2330/2330-2026Q2[?view=current]  -> one specific report;
+// view=current keeps only the report's own period in every statement
 app.get(
   '/api/filing/:cik/:accession',
   wrap(async (req, res) => {
     const company = await getCompany(client, req.params.cik);
-    let filing = company.filings.find((f) => f.accession === req.params.accession);
-    if (!filing) {
-      // Not in the list (odd form type): look it up from the folder index.
-      const cik = company.cik;
-      const nodash = req.params.accession.replace(/-/g, '');
-      const idx = await client.json(`https://www.sec.gov/Archives/edgar/data/${cik}/${nodash}/index.json`);
-      const doc = idx.directory.item.find((i) => /^[a-z0-9-]+-\d{8}\.htm$/i.test(i.name));
-      if (!doc) return res.status(404).json({ error: `Cannot find an Inline XBRL document in ${req.params.accession}` });
-      filing = { cik, accession: req.params.accession, primaryDocument: doc.name, ...filingUrls(cik, req.params.accession, doc.name) };
-    }
+    const filing = company.filings.find((f) => f.accession === req.params.accession);
+    if (!filing || !parseAccession(filing.accession)) return res.status(404).json({ error: `${req.params.accession}: no such report` });
     res.json(await filingResponse(req, company, filing));
   }),
 );
 
-// GET /api/filing?url=https://www.sec.gov/ix?doc=/Archives/edgar/data/...
-app.get(
-  '/api/filing',
-  wrap(async (req, res) => {
-    if (!req.query.url) return res.status(400).json({ error: 'url query parameter required' });
-    const base = filingFromUrl(String(req.query.url));
-    const company = await getCompany(client, String(base.cik));
-    const filing = company.filings.find((f) => f.accession === base.accession) || base;
-    res.json(await filingResponse(req, company, filing));
-  }),
-);
+// ---------- browse: TWSE industries ----------
 
-// ---------- browse: industry (SIC), filer status, ETF constituents ----------
-
-// GET /api/browse/sic -> SIC divisions and 4-digit codes with company counts
+// GET /api/browse/industry -> industry divisions and codes with company counts
 app.get(
-  '/api/browse/sic',
+  '/api/browse/industry',
   wrap(async (_req, res) => {
-    const u = await getUniverse(client);
-    res.json({ updatedAt: u.updatedAt, datasets: u.datasets, ...sicCounts(u.companies) });
+    const u = await getUniverse(client, await marketSnapshot());
+    res.json({ updatedAt: u.updatedAt, ...industryCounts(u.companies) });
   }),
 );
 
-// GET /api/browse/filer -> filer-status categories with counts
-app.get(
-  '/api/browse/filer',
-  wrap(async (_req, res) => {
-    const u = await getUniverse(client);
-    res.json({ updatedAt: u.updatedAt, datasets: u.datasets, categories: filerCounts(u.companies) });
-  }),
-);
-
-// GET /api/browse/companies?sic=7372 | ?afs=LAF [&listed=0] [&q=text] -> companies, largest public float first
+// GET /api/browse/companies?industry=24 [&q=text] -> companies, biggest first
 app.get(
   '/api/browse/companies',
   wrap(async (req, res) => {
-    const u = await getUniverse(client);
+    const u = await getUniverse(client, await marketSnapshot());
     res.json({ updatedAt: u.updatedAt, ...browseCompanies(u.companies, req.query) });
-  }),
-);
-
-// GET /api/browse/etf[?q=text] -> ETF list (popular ones first)
-app.get(
-  '/api/browse/etf',
-  wrap(async (req, res) => {
-    const { etfs, updatedAt } = await etfList(client);
-    const q = String(req.query.q || '').trim().toUpperCase();
-    const rank = new Map(POPULAR_ETFS.map((t, i) => [t, i]));
-    let rows = etfs;
-    if (q) rows = rows.filter((e) => e.ticker.startsWith(q) || e.name.toUpperCase().includes(q) || e.entity.toUpperCase().includes(q));
-    rows = [...rows].sort((a, b) => (rank.get(a.ticker) ?? 1e9) - (rank.get(b.ticker) ?? 1e9) || a.ticker.localeCompare(b.ticker));
-    res.json({ updatedAt, total: etfs.length, count: rows.length, popular: POPULAR_ETFS, etfs: rows.slice(0, Number(req.query.limit) || 300) });
-  }),
-);
-
-// GET /api/browse/etf/VOO -> latest N-PORT constituents, mapped to EDGAR companies
-app.get(
-  '/api/browse/etf/:ticker',
-  wrap(async (req, res) => {
-    res.json(await dedupe(`etf:${req.params.ticker.toUpperCase()}`, () => etfHoldings(client, req.params.ticker)));
   }),
 );
 
 // ---------- scores ----------
 
-// GET /api/score?ciks=320193,1045810 -> score of each company's newest saved
-// filing (null when the crawler has not saved one yet)
+// GET /api/score?ciks=2330,2317 -> score of each company's newest saved
+// report (null when the crawler has not saved one yet)
 app.get(
   '/api/score',
   wrap(async (req, res) => {
@@ -327,7 +266,7 @@ app.get(
   }),
 );
 
-// GET /api/score/1652044/0001652044-26-000048 -> full score breakdown of one filing (scrapes it if needed)
+// GET /api/score/2330/2330-2026Q2 -> full score breakdown of one report (fetches it if needed)
 app.get(
   '/api/score/:cik/:accession',
   wrap(async (req, res) => {
@@ -346,9 +285,9 @@ app.get(
 
 // ---------- screener ----------
 
-app.get('/api/screen/fields', (_req, res) => res.json({ fields: SCREEN_FIELDS, divisions: SIC.divisions, filer: FILER_STATUS, market: marketStatus() }));
+app.get('/api/screen/fields', (_req, res) => res.json({ fields: SCREEN_FIELDS, industries: INDUSTRY, market: marketStatus() }));
 
-// GET /api/screen?sic=7372&division=D&afs=LAF&exdiv=H,I&exsic=6770,2834&score_min=60&grossMargin_min=40
+// GET /api/screen?industry=24&division=D&exdiv=F&exind=17&score_min=60&grossMargin_min=40
 //     &roe_chg_min=2&revenueAnn_yoy_min=10&price_max=50&marketCap_min=1000&sort=score&dir=desc&limit=200
 // -> companies whose newest saved filing passes every filter (values are the
 //    single-filing figures used for the score: year-to-date, annualised).
@@ -362,8 +301,8 @@ let screenMemo = null;
 app.get(
   '/api/screen',
   wrap(async (req, res) => {
-    const u = await getUniverse(client);
     const market = await marketSnapshot({ wait: wantsMarket(req.query) });
+    const u = await getUniverse(client, market);
     const scores = latestScores();
     if (!screenMemo || screenMemo.u !== u || screenMemo.market !== market || screenMemo.scores !== scores) {
       const byCik = new Map(u.companies.map((c) => [c.cik, c]));
@@ -373,26 +312,17 @@ app.get(
   }),
 );
 
-// GET /api/browse/etf/QQQ/live -> freshest constituents (issuer daily file /
-// index list, else N-PORT) for copying into and resyncing a custom ETF
-app.get(
-  '/api/browse/etf/:ticker/live',
-  wrap(async (req, res) => {
-    res.json(await dedupe(`etf-live:${req.params.ticker.toUpperCase()}`, () => liveHoldings(client, req.params.ticker)));
-  }),
-);
-
 // ---- custom ETF (basket) charts: daily bars from IBKR TWS, else Yahoo ----
 
-// GET /api/quotes/tv-symbol/:ticker -> { symbol: 'NASDAQ:AAPL' } for TradingView's
-// widget (a bare ticker can resolve to another country's listing)
+// GET /api/quotes/tv-symbol/:ticker -> { symbol: 'TWSE:2330' } for TradingView's
+// widget (a bare number would resolve to another market's listing)
 app.get(
   '/api/quotes/tv-symbol/:ticker',
   wrap(async (req, res) => {
-    const t = String(req.params.ticker).toUpperCase().replace(/\./g, '-');
+    const t = String(req.params.ticker).toUpperCase();
     const snap = await marketSnapshot();
     const rec = snap?.byTicker?.[t];
-    res.json({ ticker: t, symbol: rec?.tv || t.replace(/-/g, '.'), exchange: rec?.exchange || null, known: !!rec });
+    res.json({ ticker: t, symbol: rec?.tv || `TWSE:${t}`, exchange: rec?.exchange || 'TWSE', known: !!rec });
   }),
 );
 
@@ -413,7 +343,7 @@ app.post(
   }),
 );
 
-// GET /api/bars/AAPL -> ten years of daily OHLC (split-adjusted)
+// GET /api/bars/2330 -> ten years of daily OHLC (split-adjusted)
 app.get(
   '/api/bars/:symbol',
   wrap(async (req, res) => {
@@ -481,19 +411,19 @@ app.use((err, _req, res, _next) => {
   res.status(status).json({ error: err.message });
 });
 
-// the prefix: /stockscan -> /stockscan/ (relative asset URLs need the slash), everything below it -> app
+// the prefix: /stockscan-tw -> /stockscan-tw/ (relative asset URLs need the slash), everything below it -> app
 let root = app;
 if (BASE) {
   root = express();
   root.use((req, res, next) => (req.path === BASE ? res.redirect(301, `${BASE}/${req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : ''}`) : next()));
   root.use(BASE, app);
-  root.use((_req, res) => res.status(404).type('text').send(`stockscan is served under ${BASE}/`));
+  root.use((_req, res) => res.status(404).type('text').send(`stockscan-tw is served under ${BASE}/`));
 }
 
 root.listen(PORT, () => {
-  console.log(`stockscan server listening on http://localhost:${PORT}${BASE}/`);
+  console.log(`stockscan-tw server listening on http://localhost:${PORT}${BASE}/`);
   console.log(`store: ${store.file} (${store.filingCount()} filings saved)`);
-  if (crawler.status().enabled) console.log('background crawl of latest filings enabled (STOCKSCAN_CRAWL=0 to disable)');
+  if (crawler.status().enabled) console.log('background crawl of MOPS reports enabled (STOCKSCAN_CRAWL=0 to disable)');
   if (barCrawler.status().enabled) console.log('background crawl of daily bars enabled (STOCKSCAN_BARS_CRAWL=0 to disable)');
   if (!fs.existsSync(dist)) console.log('web/dist not found - run "npm run build:web" or use the Vite dev server (npm --prefix web run dev)');
 });

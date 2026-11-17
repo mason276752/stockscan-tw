@@ -1,15 +1,15 @@
 <script setup>
-// A searchable SIC picker: type a code, a Chinese name or the SEC English
-// title, pick from the matches. v-model is the 4-digit code ('' = none).
+// A searchable industry picker: type a code, a Chinese name or the English
+// title, pick from the matches. v-model is the TWSE industry code ('' = none).
 import { computed, ref, watch } from 'vue';
 import { isZh, t } from '../i18n';
 
 const props = defineProps({
   modelValue: { type: String, default: '' },
-  codes: { type: Array, default: () => [] }, // [{ code, zh, title, division, listed, total }]
+  codes: { type: Array, default: () => [] }, // [{ code, zh, title, division, total }]
   divisions: { type: Array, default: () => [] }, // [{ id, zh }]
   placeholder: { type: String, default: '' },
-  countKey: { type: String, default: 'listed' },
+  countKey: { type: String, default: 'total' },
 });
 const emit = defineEmits(['update:modelValue']);
 
@@ -40,7 +40,7 @@ const matches = computed(() => {
 });
 const divisionName = (id) => {
   const d = props.divisions.find((x) => x.id === id);
-  return (d && (isZh.value ? d.zh : d.en || d.zh)) || id;
+  return (d && (isZh.value ? d.zh : d.title || d.zh)) || id;
 };
 
 function choose(c) {

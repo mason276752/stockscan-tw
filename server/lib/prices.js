@@ -1,8 +1,8 @@
-// Share prices. SEC has none, so these come from Yahoo Finance's public chart
-// endpoint (no key needed): the current quote and ten years of daily closes.
-// Yahoo's closes are split-adjusted; filings report EPS and share counts as
-// they were at the time, so the split events are used to turn closes back
-// into the prices actually quoted on each date.
+// Share prices from Yahoo Finance's public chart endpoint (no key needed):
+// the current quote and ten years of daily closes. Yahoo's closes are
+// split-adjusted; reports give EPS and share counts as they were at the
+// time, so the split events are used to turn closes back into the prices
+// actually quoted on each date.
 
 import { store } from './store.js';
 
@@ -28,8 +28,12 @@ async function chart(symbol, params) {
   return r;
 }
 
-// Yahoo symbol: EDGAR tickers already use "-" for share classes (BRK-B).
-export const yahooSymbol = (ticker) => String(ticker).toUpperCase().replace(/\./g, '-');
+// Yahoo symbol: a TWSE code takes the .TW suffix (2330.TW); anything else
+// (an index such as ^TWII) goes as it is.
+export const yahooSymbol = (ticker) => {
+  const t = String(ticker).toUpperCase();
+  return /^\d{4,6}[A-Z]?$/.test(t) ? `${t}.TW` : t;
+};
 
 export async function quote(ticker) {
   const symbol = yahooSymbol(ticker);

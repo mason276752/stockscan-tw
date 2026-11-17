@@ -1,20 +1,20 @@
 services:
-  stockscan:
+  stockscan-tw:
     build: .
-    image: stockscan
-    container_name: stockscan
+    image: stockscan-tw
+    container_name: stockscan-tw
     restart: unless-stopped
     ports:
       # host:container - the server inside listens on PORT too (see environment)
       - "${PORT:-3388}:${PORT:-3388}"
     environment:
       PORT: ${PORT:-3388}
-      # SEC requires a User-Agent that identifies you (required)
-      SEC_USER_AGENT: ${SEC_USER_AGENT:-Mason mason276752@gmail.com}
-      # serve under a path prefix, e.g. /stockscan (empty = the root)
-      BASE_URL: ${BASE_URL:-/public/3388}
-      # background crawl of every listed company's recent filings (0 = off)
+      # serve under a path prefix, e.g. /stockscan-tw (empty = the root)
+      BASE_URL: ${BASE_URL:-}
+      # background crawl of every listed company's recent reports from MOPS (0 = off)
       STOCKSCAN_CRAWL: ${STOCKSCAN_CRAWL:-1}
+      # quarters per company the crawler keeps
+      STOCKSCAN_DEPTH: ${STOCKSCAN_DEPTH:-12}
       # custom-ETF daily bars: TradingView websocket (0 = off) -> IBKR TWS -> Yahoo
       TV_ENABLED: ${TV_ENABLED:-1}
       # IBKR TWS / IB Gateway on the Docker host (enable "Allow connections from
@@ -23,7 +23,7 @@ services:
       IB_HOST: ${IB_HOST:-host.docker.internal}
       IB_PORT: ${IB_PORT:-7496}
     volumes:
-      # SQLite store (filings, scores, caches) survives rebuilds
+      # the store (reports, scores, listed table) and the caches survive rebuilds
       - ./data:/app/data
     extra_hosts:
       # host.docker.internal on Linux (Docker Desktop provides it already)

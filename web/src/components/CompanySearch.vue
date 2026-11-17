@@ -86,7 +86,7 @@ function onBlur() {
         <span class="ticker">{{ r.ticker }}</span>
         <span class="name">{{ r.name }}</span>
         <span class="score"><ScoreBadge :score="r.score" /></span>
-        <span class="muted mono small">CIK {{ r.cik }}</span>
+        <span v-if="r.nameEn" class="muted small en">{{ r.nameEn }}</span>
       </li>
     </ul>
   </div>

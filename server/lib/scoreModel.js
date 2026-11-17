@@ -12,7 +12,7 @@
 //
 // The numbers are the ones the indicator table shows for that filing's
 // column: a quarterly filer's quarter has its flows ×4 and its balances
-// averaged with the quarter before (Q4 = 10-K full year − nine months), so
+// averaged with the quarter before (Q4 = annual report − nine months), so
 // scoring a filing needs its neighbours (scoreFilingOf); an annual filer's
 // year is the filing alone, flows as they are and the comparative column as
 // the opening balances (scoreFiling). Cash-flow adequacy is that one period
@@ -87,7 +87,7 @@ export function singleFilingInputs(data) {
 
   // flows: per statement, the undimensioned duration ending at the period end
   // that carries the most facts (ties -> longer, i.e. year to date). Amazon's
-  // 10-Q has an extra trailing-twelve-month column with only a few lines, so
+  // quarterly report has an extra trailing-twelve-month column with only a few lines, so
   // "longest" alone would pick an almost empty column.
   const flows = {};
   const flowsA = {};
@@ -153,7 +153,7 @@ export const AMOUNT_FIELDS = [
 // The score from ratios() inputs `g` (see indicators.js), for the filing
 // `header` (accession, form, fiscal labels …). `basis` says what the flows
 // cover: kind 'quarter' (one quarter ×4), 'annual' (a full year) or 'ytd'
-// (a 10-Q's year-to-date column ×12/months - the fallback), with monthsLen;
+// (a quarterly report's year-to-date column ×12/months - the fallback), with monthsLen;
 // `partial` marks a fallback that should be redone once the neighbouring
 // filing is saved.
 function scoreInputs(g, header, basis, { sharesDiluted } = {}) {
@@ -182,7 +182,7 @@ function scoreInputs(g, header, basis, { sharesDiluted } = {}) {
     fiscalPeriod: header.fiscalPeriod,
     periodEnd: header.periodEnd,
     filingDate: header.filingDate,
-    basis: { ...basis, annualized: monthsLen !== 12, note: basis.partial ? `缺上一季的申報，先以這份申報單獨計算：${note}` : note },
+    basis: { ...basis, annualized: monthsLen !== 12, note: basis.partial ? `缺上一季的財報，先以這份財報單獨計算：${note}` : note },
     ...s,
   };
 }
@@ -216,7 +216,7 @@ export function scoreFiling(data, { partial = false } = {}) {
 // Score of `filing` (an entry of company.filings) the way the indicator
 // table computes its column. `load(filing)` fetches a saved filing; a
 // quarterly filer's quarter needs the one before (opening balances) and,
-// for Q4, the year's 10-Qs (Q4 flows = full year − nine months). When those
+// for Q4, the year's quarterly reports (Q4 flows = full year − nine months). When those
 // are not there the filing is scored alone and marked partial.
 export async function scoreFilingOf(load, company, filing) {
   const quarterly = company.filings.some((f) => f.fiscalPeriod && f.fiscalPeriod.startsWith('Q'));
@@ -229,12 +229,12 @@ export async function scoreFilingOf(load, company, filing) {
   const [prev, cur] = points;
   const hasFlows = Object.values(cur.flows).some((x) => x != null);
   if (cur.missing || !hasFlows || !cur.sources?.includes(filing.accession)) return scoreFiling(await load(filing), { partial: true });
-  // a first quarter without the 10-K before it: the 10-Q's own comparative
+  // a first quarter without the annual report before it: the quarterly report's own comparative
   // column is that quarter end, and its three-month column the quarter
   if (prev.missing) return scoreFiling(await load(filing), { partial: q !== 1 });
   const g = quarterInputs(points, 1, () => adequacyOver(points, 1, 1, 1));
   const header = { accession: filing.accession, cik: company.cik, form: filing.form, fiscalYear: String(year), fiscalPeriod: filing.fiscalPeriod, periodEnd: cur.periodEnd || filing.reportDate, filingDate: filing.filingDate };
-  // Q4's weighted shares cannot be full year − nine months: the 10-K's own
+  // Q4's weighted shares cannot be full year − nine months: the annual report's own
   return scoreInputs(g, header, { kind: 'quarter', monthsLen: 3, quarter: `${year} Q${q}` }, { sharesDiluted: q === 4 ? first(cur.fy, C.sharesDiluted) : undefined });
 }
 

@@ -2,7 +2,7 @@ import { defineConfig } from 'vite';
 import vue from '@vitejs/plugin-vue';
 
 // BASE_URL (same variable as the server): dev server and proxy live under the
-// prefix too, so `BASE_URL=/stockscan npm run dev` mirrors production. The
+// prefix too, so `BASE_URL=/stockscan-tw npm run dev` mirrors production. The
 // production build always uses relative asset URLs and takes the prefix from
 // the server at runtime, so one build serves any BASE_URL.
 const base = `/${String(process.env.BASE_URL || '').trim().replace(/^\/+|\/+$/g, '')}`.replace(/^\/$/, '');

@@ -11,7 +11,9 @@
 import { pickFiling } from './filings.js';
 import { yearQuarterPoints } from './quarters.js';
 
-// Concept fallbacks (US-GAAP first, then IFRS). Lists are tried in order.
+// Concept fallbacks, tried in order: MOPS reports use IFRS (ifrs-full:) and
+// the Taiwan extension (tifrs-…:, see TW_ALIASES / TW_SUMS in quarters.js);
+// the US-GAAP names are kept for the shared fallbacks.
 export const C = {
   revenue: ['us-gaap:Revenues', 'us-gaap:RevenueFromContractWithCustomerIncludingAssessedTax', 'us-gaap:SalesRevenueNet', 'us-gaap:RevenuesNetOfInterestExpense', 'us-gaap:RegulatedAndUnregulatedOperatingRevenue', 'us-gaap:RevenuesExcludingInterestAndDividends', 'us-gaap:RealEstateRevenueNet', 'ifrs-full:Revenue', 'ifrs-full:RevenueFromContractsWithCustomers', 'ifrs-full:RevenueFromSaleOfGoods', 'ifrs-full:RevenueFromRenderingOfServices', 'ifrs-full:RevenueAndOperatingIncome', 'ifrs-full:InsuranceRevenue', 'ifrs-full:RevenueFromRenderingOfTelecommunicationServices', 'ifrs-full:RevenueFromRenderingOfTransportServices', 'ifrs-full:RevenueFromRenderingOfCargoAndMailTransportServices', 'us-gaap:RegulatedOperatingRevenue', 'us-gaap:RegulatedOperatingRevenueGas', 'us-gaap:RegulatedOperatingRevenueElectric', 'us-gaap:OilAndGasRevenue', 'us-gaap:OperatingLeaseLeaseIncome', 'us-gaap:FeeIncome'],
   // banks: net revenue = net interest income + non-interest income
@@ -30,7 +32,7 @@ export const C = {
   rd: ['us-gaap:ResearchAndDevelopmentExpense', 'us-gaap:ResearchAndDevelopmentExpenseExcludingAcquiredInProcessCost', 'ifrs-full:ResearchAndDevelopmentExpense'],
   sga: ['us-gaap:SellingGeneralAndAdministrativeExpense', 'us-gaap:GeneralAndAdministrativeExpense', 'ifrs-full:SellingGeneralAndAdministrativeExpense', 'ifrs-full:AdministrativeExpense'],
   incomeTax: ['us-gaap:IncomeTaxExpenseBenefit', 'ifrs-full:IncomeTaxExpenseContinuingOperations'],
-  buybacks: ['us-gaap:PaymentsForRepurchaseOfCommonStock', 'us-gaap:PaymentsForRepurchaseOfEquity', 'ifrs-full:PaymentsToAcquireOrRedeemEntitysShares'],
+  buybacks: ['us-gaap:PaymentsForRepurchaseOfCommonStock', 'us-gaap:PaymentsForRepurchaseOfEquity', 'ifrs-full:PaymentsToAcquireOrRedeemEntitysShares', 'tifrs-SCF:PaymentsToAcquireTreasuryShares'],
   stockIssued: ['us-gaap:ProceedsFromIssuanceOfCommonStock', 'us-gaap:ProceedsFromIssuanceOrSaleOfEquity', 'us-gaap:ProceedsFromIssuanceInitialPublicOffering', 'ifrs-full:ProceedsFromIssuingShares'],
   sharesDiluted: ['us-gaap:WeightedAverageNumberOfDilutedSharesOutstanding', 'us-gaap:WeightedAverageNumberOfShareOutstandingBasicAndDiluted', 'us-gaap:WeightedAverageNumberOfSharesOutstandingBasic', 'ifrs-full:AdjustedWeightedAverageShares', 'ifrs-full:WeightedAverageShares'],
   // the usual lines between operating and pre-tax income, for filers without an operating income line
@@ -56,19 +58,19 @@ export const C = {
     'ifrs-full:ProfitLossBeforeTax',
   ],
   netIncome: ['us-gaap:NetIncomeLoss', 'us-gaap:NetIncomeLossAvailableToCommonStockholdersBasic', 'us-gaap:ProfitLoss', 'ifrs-full:ProfitLossAttributableToOwnersOfParent', 'ifrs-full:ProfitLoss', 'ifrs-full:ProfitLossFromContinuingOperations', 'us-gaap:NetIncreaseDecreaseInNetAssetsResultingFromOperations'],
-  eps: ['us-gaap:EarningsPerShareDiluted', 'us-gaap:EarningsPerShareBasicAndDiluted', 'us-gaap:EarningsPerShareBasic', 'us-gaap:IncomeLossFromContinuingOperationsPerDilutedShare', 'us-gaap:IncomeLossFromContinuingOperationsPerBasicShare', 'ifrs-full:DilutedEarningsLossPerShare', 'ifrs-full:BasicEarningsLossPerShare', 'ifrs-full:DilutedEarningsLossPerShareFromContinuingOperations', 'ifrs-full:BasicEarningsLossPerShareFromContinuingOperations'],
+  eps: ['ifrs-full:BasicEarningsLossPerShare', 'ifrs-full:DilutedEarningsLossPerShare', 'ifrs-full:DilutedEarningsLossPerShareFromContinuingOperations', 'ifrs-full:BasicEarningsLossPerShareFromContinuingOperations', 'us-gaap:EarningsPerShareDiluted', 'us-gaap:EarningsPerShareBasicAndDiluted', 'us-gaap:EarningsPerShareBasic', 'us-gaap:IncomeLossFromContinuingOperationsPerDilutedShare', 'us-gaap:IncomeLossFromContinuingOperationsPerBasicShare'],
   ocf: ['us-gaap:NetCashProvidedByUsedInOperatingActivities', 'us-gaap:NetCashProvidedByUsedInOperatingActivitiesContinuingOperations', 'ifrs-full:CashFlowsFromUsedInOperatingActivities', 'ifrs-full:CashFlowsFromUsedInOperatingActivitiesContinuingOperations'],
-  icf: ['us-gaap:NetCashProvidedByUsedInInvestingActivities', 'us-gaap:NetCashProvidedByUsedInInvestingActivitiesContinuingOperations', 'ifrs-full:CashFlowsFromUsedInInvestingActivities'],
-  fcf: ['us-gaap:NetCashProvidedByUsedInFinancingActivities', 'us-gaap:NetCashProvidedByUsedInFinancingActivitiesContinuingOperations', 'ifrs-full:CashFlowsFromUsedInFinancingActivities'],
+  icf: ['us-gaap:NetCashProvidedByUsedInInvestingActivities', 'us-gaap:NetCashProvidedByUsedInInvestingActivitiesContinuingOperations', 'ifrs-full:CashFlowsFromUsedInInvestingActivities', 'tifrs-SCF:NetCashFlowsFromUsedInInvestingActivities'],
+  fcf: ['us-gaap:NetCashProvidedByUsedInFinancingActivities', 'us-gaap:NetCashProvidedByUsedInFinancingActivitiesContinuingOperations', 'ifrs-full:CashFlowsFromUsedInFinancingActivities', 'tifrs-SCF:CashFlowsFromUsedInFinancingActivities'],
   capex: ['us-gaap:PaymentsToAcquirePropertyPlantAndEquipment', 'us-gaap:PaymentsToAcquireProductiveAssets', 'us-gaap:PaymentsToAcquireOtherPropertyPlantAndEquipment', 'us-gaap:PaymentsForCapitalImprovements', 'us-gaap:PaymentsToAcquireOilAndGasPropertyAndEquipment', 'us-gaap:PaymentsToAcquireOilAndGasProperty', 'us-gaap:PaymentsToAcquireMachineryAndEquipment', 'us-gaap:PaymentsForFlightEquipment', 'us-gaap:PaymentsToAcquireOilAndGasEquipment', 'us-gaap:PaymentsToAcquireRealEstate', 'us-gaap:PaymentsToDevelopRealEstateAssets', 'us-gaap:PaymentsToAcquireCommercialRealEstate', 'us-gaap:PaymentsForConstructionInProcess', 'us-gaap:PaymentsToAcquireOtherProductiveAssets', 'ifrs-full:PurchaseOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities', 'ifrs-full:PurchaseOfPropertyPlantAndEquipmentIntangibleAssetsOtherThanGoodwillInvestmentPropertyAndOtherNoncurrentAssets'],
   // bought intangibles (software, licences) are capital spending too
   capexIntangibles: ['us-gaap:PaymentsToAcquireIntangibleAssets', 'us-gaap:PaymentsToDevelopSoftware', 'ifrs-full:PurchaseOfIntangibleAssetsClassifiedAsInvestingActivities'],
   dividends: ['us-gaap:PaymentsOfDividends', 'us-gaap:PaymentsOfDividendsCommonStock', 'us-gaap:PaymentsOfOrdinaryDividends', 'us-gaap:PaymentsOfDividendsCommonStock', 'ifrs-full:DividendsPaidClassifiedAsFinancingActivities', 'ifrs-full:DividendsPaid'],
   // balances
   cash: ['us-gaap:CashAndCashEquivalentsAtCarryingValue', 'us-gaap:CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents', 'us-gaap:CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalentsIncludingDisposalGroupAndDiscontinuedOperations', 'us-gaap:CashAndCashEquivalentsAtCarryingValueIncludingDiscontinuedOperations', 'us-gaap:CashAndDueFromBanks', 'us-gaap:CashCashEquivalentsAndFederalFundsSold', 'us-gaap:CashCashEquivalentsAndShortTermInvestments', 'us-gaap:Cash', 'us-gaap:CashEquivalentsAtCarryingValue', 'ifrs-full:CashAndCashEquivalents', 'ifrs-full:Cash', 'ifrs-full:CashAndBankBalancesAtCentralBanks', 'us-gaap:CashAndCashEquivalentsFairValueDisclosure'],
-  ar: ['us-gaap:AccountsReceivableNetCurrent', 'us-gaap:ReceivablesNetCurrent', 'us-gaap:AccountsNotesAndLoansReceivableNetCurrent', 'us-gaap:AccountsAndOtherReceivablesNetCurrent', 'us-gaap:AccountsReceivableNet', 'us-gaap:ContractWithCustomerReceivableAfterAllowanceForCreditLossCurrent', 'us-gaap:ContractWithCustomerReceivableAfterAllowanceForCreditLoss', 'us-gaap:PremiumsReceivableAtCarryingValue', 'us-gaap:AccountsReceivableGrossCurrent', 'us-gaap:AccountsAndNotesReceivableNet', 'ifrs-full:CurrentTradeReceivables', 'ifrs-full:TradeAndOtherCurrentReceivables', 'ifrs-full:TradeReceivables'],
+  ar: ['tw:Receivables', 'us-gaap:AccountsReceivableNetCurrent', 'us-gaap:ReceivablesNetCurrent', 'us-gaap:AccountsNotesAndLoansReceivableNetCurrent', 'us-gaap:AccountsAndOtherReceivablesNetCurrent', 'us-gaap:AccountsReceivableNet', 'us-gaap:ContractWithCustomerReceivableAfterAllowanceForCreditLossCurrent', 'us-gaap:ContractWithCustomerReceivableAfterAllowanceForCreditLoss', 'us-gaap:PremiumsReceivableAtCarryingValue', 'us-gaap:AccountsReceivableGrossCurrent', 'us-gaap:AccountsAndNotesReceivableNet', 'ifrs-full:CurrentTradeReceivables', 'ifrs-full:TradeAndOtherCurrentReceivables', 'ifrs-full:TradeReceivables'],
   inventory: ['us-gaap:InventoryNet', 'us-gaap:InventoryGross', 'us-gaap:InventoryNetOfAllowancesCustomerAdvancesAndProgressBillings', 'us-gaap:EnergyRelatedInventory', 'us-gaap:RetailRelatedInventoryMerchandise', 'us-gaap:AirlineRelatedInventoryNet', 'us-gaap:InventoryRealEstate', 'us-gaap:InventoryOperativeBuilders', 'us-gaap:FIFOInventoryAmount', 'us-gaap:InventoryFinishedGoodsNetOfReserves', 'us-gaap:InventoryRawMaterialsAndSupplies', 'us-gaap:EnergyRelatedInventoryNaturalGasInStorage', 'ifrs-full:Inventories'],
-  prepaid: ['us-gaap:PrepaidExpenseCurrent'],
+  prepaid: ['us-gaap:PrepaidExpenseCurrent', 'ifrs-full:CurrentPrepayments'],
   currentAssets: ['us-gaap:AssetsCurrent', 'ifrs-full:CurrentAssets', 'ifrs-full:CurrentAssetsOtherThanAssetsOrDisposalGroupsClassifiedAsHeldForSaleOrAsHeldForDistributionToOwners'],
   nonCurrentAssets: ['us-gaap:AssetsNoncurrent', 'ifrs-full:NoncurrentAssets'],
   totalAssets: ['us-gaap:Assets', 'ifrs-full:Assets'],
@@ -76,7 +78,7 @@ export const C = {
   ppeGross: ['us-gaap:PropertyPlantAndEquipmentGross', 'us-gaap:PropertyPlantAndEquipmentAndFinanceLeaseRightOfUseAssetBeforeAccumulatedDepreciationAndAmortization', 'us-gaap:RealEstateInvestmentPropertyAtCost', 'us-gaap:PublicUtilitiesPropertyPlantAndEquipmentPlantInService', 'ifrs-full:PropertyPlantAndEquipmentGrossCarryingAmount'],
   ltInvestments: ['us-gaap:LongTermInvestments', 'us-gaap:OtherLongTermInvestments', 'us-gaap:MarketableSecuritiesNoncurrent', 'us-gaap:EquityMethodInvestments', 'ifrs-full:NoncurrentFinancialAssets', 'ifrs-full:InvestmentAccountedForUsingEquityMethod'],
   otherAssets: ['us-gaap:OtherAssetsNoncurrent', 'ifrs-full:OtherNoncurrentAssets'],
-  ap: ['us-gaap:AccountsPayableCurrent', 'us-gaap:AccountsPayableTradeCurrent', 'us-gaap:AccountsPayableAndAccruedLiabilitiesCurrent', 'us-gaap:AccountsPayableAndOtherAccruedLiabilitiesCurrent', 'us-gaap:AccountsPayableCurrentAndNoncurrent', 'us-gaap:AccountsPayableAndAccruedLiabilitiesCurrentAndNoncurrent', 'us-gaap:AccountsPayableAndOtherAccruedLiabilities', 'us-gaap:OtherAccountsPayableAndAccruedLiabilities', 'ifrs-full:TradeAndOtherCurrentPayablesToTradeSuppliers', 'ifrs-full:TradeAndOtherPayablesToTradeSuppliers', 'ifrs-full:TradeAndOtherCurrentPayables', 'ifrs-full:TradeAndOtherPayables'],
+  ap: ['tw:Payables', 'us-gaap:AccountsPayableCurrent', 'us-gaap:AccountsPayableTradeCurrent', 'us-gaap:AccountsPayableAndAccruedLiabilitiesCurrent', 'us-gaap:AccountsPayableAndOtherAccruedLiabilitiesCurrent', 'us-gaap:AccountsPayableCurrentAndNoncurrent', 'us-gaap:AccountsPayableAndAccruedLiabilitiesCurrentAndNoncurrent', 'us-gaap:AccountsPayableAndOtherAccruedLiabilities', 'us-gaap:OtherAccountsPayableAndAccruedLiabilities', 'ifrs-full:TradeAndOtherCurrentPayablesToTradeSuppliers', 'ifrs-full:TradeAndOtherPayablesToTradeSuppliers', 'ifrs-full:TradeAndOtherCurrentPayables', 'ifrs-full:TradeAndOtherPayables'],
   currentLiabilities: ['us-gaap:LiabilitiesCurrent', 'ifrs-full:CurrentLiabilities', 'ifrs-full:CurrentLiabilitiesOtherThanLiabilitiesIncludedInDisposalGroupsClassifiedAsHeldForSale'],
   totalLiabilities: ['us-gaap:Liabilities', 'ifrs-full:Liabilities'],
   nonCurrentLiabilities: ['us-gaap:LiabilitiesNoncurrent', 'ifrs-full:NoncurrentLiabilities'],
@@ -85,7 +87,7 @@ export const C = {
   liabilitiesAndEquity: ['us-gaap:LiabilitiesAndStockholdersEquity', 'ifrs-full:EquityAndLiabilities'],
   paidInCapital: ['us-gaap:CommonStocksIncludingAdditionalPaidInCapital', 'ifrs-full:IssuedCapital'],
   commonStock: ['us-gaap:CommonStockValue', 'us-gaap:CommonStockValueOutstanding'],
-  apic: ['us-gaap:AdditionalPaidInCapital', 'us-gaap:AdditionalPaidInCapitalCommonStock', 'ifrs-full:SharePremium'],
+  apic: ['us-gaap:AdditionalPaidInCapital', 'us-gaap:AdditionalPaidInCapitalCommonStock', 'ifrs-full:SharePremium', 'ifrs-full:CapitalReserve'],
 };
 
 export const first = (map, keys) => {
@@ -124,20 +126,20 @@ export const ROWS = [
   { key: 'dio', group: '經營能力', name: '平均銷貨日數（平均在庫天數）', unit: '天', kind: 'ratio', annualized: true, formula: '365 ÷ 存貨週轉率', benchmark: { op: '<=', value: 100 } },
   { key: 'apTurnover', group: '經營能力', name: '應付款項週轉率', unit: '次', kind: 'ratio', annualized: true, formula: '營業成本（年化）÷ 平均應付帳款' },
   { key: 'dpo', group: '經營能力', name: '平均付款日數', unit: '天', kind: 'ratio', annualized: true, formula: '365 ÷ 應付款項週轉率：進貨後平均多久才付錢給供應商' },
-  { key: 'cashGap', group: '經營能力', name: '缺現金的天數（現金轉換循環）', unit: '天', kind: 'ratio', annualized: true, formula: '平均銷貨日數 + 平均收現日數 − 平均付款日數：從付錢給供應商到收到客戶的錢之間，自己要墊多少天的錢；愈少愈好，負數代表先收到錢才付款（如 Apple、Amazon）' },
+  { key: 'cashGap', group: '經營能力', name: '缺現金的天數（現金轉換循環）', unit: '天', kind: 'ratio', annualized: true, formula: '平均銷貨日數 + 平均收現日數 − 平均付款日數：從付錢給供應商到收到客戶的錢之間，自己要墊多少天的錢；愈少愈好，負數代表先收到錢才付款（如便利商店、通路業）' },
   { key: 'cycle', group: '經營能力', name: '做生意的完整週期', unit: '天', kind: 'ratio', annualized: true, formula: '平均銷貨日數 + 平均收現日數：從進貨到賣出、再到收到現金要多久（未扣應付帳款天數的營業週期）；沒有存貨的公司 = 平均收現日數', benchmark: { op: '<=', value: 200 } },
   { key: 'ppeTurnover', group: '經營能力', name: '不動產、廠房及設備週轉率', unit: '次', kind: 'ratio', annualized: true, formula: '營業收入（年化）÷ 平均不動產、廠房及設備淨額' },
   { key: 'assetTurnover', group: '經營能力', name: '總資產週轉率', unit: '次', kind: 'ratio', annualized: true, formula: '營業收入（年化）÷ 平均總資產', benchmark: { op: '>=', value: 1 } },
 
   { key: 'roa', group: '獲利能力', name: '資產報酬率 ROA', unit: '%', kind: 'ratio', annualized: true, formula: '稅後淨利（年化）÷ 平均總資產' },
   { key: 'roe', group: '獲利能力', name: '權益報酬率 ROE', unit: '%', kind: 'ratio', annualized: true, formula: '稅後淨利（年化）÷ 平均股東權益（母公司）', benchmark: { op: '>=', value: 20 } },
-  { key: 'pretaxToCapital', group: '獲利能力', name: '稅前純益佔實收資本比率', unit: '%', kind: 'ratio', annualized: true, formula: '稅前淨利（年化）÷（普通股股本 + 資本公積）。美國公司面額極低，此比率意義有限' },
+  { key: 'pretaxToCapital', group: '獲利能力', name: '稅前純益佔實收資本比率', unit: '%', kind: 'ratio', annualized: true, formula: '稅前淨利（年化）÷ 實收資本（股本合計）' },
   { key: 'grossMargin', group: '獲利能力', name: '營業毛利率 ①', unit: '%', kind: 'ratio', formula: '毛利 ÷ 營業收入（無毛利科目時用 營業收入 − 營業成本；沒有營業成本科目、從費用明細估算；損益表完全沒有直接成本、只有研發／管理費用的授權型公司視為 100%）', benchmark: { op: '>=', value: 25 } },
   { key: 'opMargin', group: '獲利能力', name: '營業利益率 ②', unit: '%', kind: 'ratio', formula: '營業利益 ÷ 營業收入', benchmark: { op: '>=', value: 15 } },
   { key: 'opexRatio', group: '獲利能力', name: '營業費用率 ①−②', unit: '%', kind: 'ratio', formula: '營業毛利率 − 營業利益率，即營業費用（銷售、管理、研發）÷ 營業收入；愈低代表費用控制愈好' },
   { key: 'safetyMargin', group: '獲利能力', name: '經營安全邊際率 ②/①', unit: '%', kind: 'ratio', formula: '營業利益率 ÷ 營業毛利率，愈大愈好' },
   { key: 'netMargin', group: '獲利能力', name: '純益率（淨利率）', unit: '%', kind: 'ratio', formula: '稅後淨利 ÷ 營業收入', benchmark: { op: '>=', value: 10 } },
-  { key: 'eps', group: '獲利能力', name: '每股盈餘（稀釋）', unit: '元', kind: 'flow', formula: '申報書稀釋每股盈餘；Q4 為全年減前三季之近似值，年度檢視為四季相加。未做股票分割調整，跨越分割日的期間數字會失真', benchmark: { op: '>', value: 0 } },
+  { key: 'eps', group: '獲利能力', name: '每股盈餘', unit: '元', kind: 'flow', formula: '財報的基本每股盈餘；Q4 為全年減前三季之近似值，年度檢視為四季相加。未做減資／股票股利調整，跨越該日期的期間數字會失真', benchmark: { op: '>', value: 0 } },
   { key: 'netIncome', group: '獲利能力', name: '稅後淨利', unit: '百萬', kind: 'flow', formula: '歸屬於母公司之淨利' },
   { key: 'revenue', group: '獲利能力', name: '營業收入', unit: '百萬', kind: 'flow', formula: '營業收入' },
 
@@ -173,7 +175,7 @@ export async function loadPoints(load, company, keys, quarterly) {
   for (const y of years) {
     filingsByYear[y] = {};
     for (const p of quarterly ? ['Q1', 'Q2', 'Q3', 'FY'] : ['FY']) {
-      // a year's Q4 needs the 10-K and the 10-Qs (cumulative nine months)
+      // a year's Q4 needs the annual report and the quarterly ones (cumulative nine months)
       const needed = keys.some((k) => k.year === y && (!quarterly || k.q === 4 || p === `Q${k.q}`));
       const f = needed ? pickFiling(company.filings, { year: y, period: p }) : null;
       if (f) filingsByYear[y][p] = f;

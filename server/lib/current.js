@@ -1,9 +1,10 @@
 // "Current period" view of a filing: strip every comparative column so each
 // statement shows just the period the filing is about.
 //   balance sheet   the period-end balance
-//   income / OCI    the three-month column of a 10-Q (full year of a 10-K)
-//   cash flow       10-Qs usually only report year-to-date, so the quarter is
-//                   derived as YTD − previous 10-Q's YTD; opening cash is the
+//   income / OCI    the three-month column of a quarterly report (full year
+//                   of the annual report)
+//   cash flow       quarterly reports only give year-to-date, so the quarter
+//                   is derived as YTD − the previous quarter's YTD; opening cash is the
 //                   previous quarter's closing balance
 //   equity          opening balance, the period's movements, closing balance
 // Dimensional columns (equity components, product lines) are kept per group.
@@ -26,6 +27,20 @@ function rowIn(stmt, row, colId = null) {
 
 const isStartRow = (li) => /periodStart/i.test(li.preferredLabel || '');
 const isEndRow = (li) => /periodEnd/i.test(li.preferredLabel || '');
+// the balance a start / end row carries: one concept in an SEC filing, two
+// in a MOPS report (CashAndCashEquivalentsAtBeginningOfPeriod / …AtEndOfPeriod)
+const balanceOf = (concept) => String(concept).replace(/At(Beginning|End)OfPeriod$/, '');
+
+// The previous report's row holding this opening balance: its closing row
+// for the same balance, else the usual concept / label match.
+function openingRow(prevStmt, li, colId) {
+  if (isStartRow(li)) {
+    const want = balanceOf(li.concept);
+    const hit = prevStmt.lineItems.find((x) => isEndRow(x) && balanceOf(x.concept) === want && x.values[colId] != null);
+    if (hit) return hit;
+  }
+  return rowIn(prevStmt, li, colId);
+}
 
 function numeric(cell) {
   return cell && typeof cell.value === 'number' && !cell.nil ? cell.value : null;
@@ -105,7 +120,7 @@ function orderColumns(columns) {
     .map((x) => x.c);
 }
 
-// Quarter = this filing's YTD − the previous 10-Q's YTD, per dimension group.
+// Quarter = this report's YTD − the previous quarter's YTD, per dimension group.
 function deriveFromYtd(stmt, prevStmt, end, prevEnd, accession, prevAccession) {
   const columns = [];
   const values = {}; // lineItem index -> { colId: cell }
@@ -125,7 +140,7 @@ function deriveFromYtd(stmt, prevStmt, end, prevEnd, accession, prevAccession) {
       if (li.abstract) return;
       const v = (values[idx] ||= {});
       if (opening && !isEndRow(li)) {
-        const openRow = rowIn(prevStmt, li, opening.id);
+        const openRow = openingRow(prevStmt, li, opening.id);
         const cell = openRow?.values[opening.id];
         if (cell) v[`open${sfx}`] = { ...cell, source: prevAccession };
       }
@@ -284,7 +299,7 @@ function rollForward(stmt) {
 export function currentView(data, filing, prev) {
   const end = filing.reportDate || data.filing.periodEnd;
   const form = (filing.form || data.filing.form || '').toUpperCase();
-  const isQuarterly = form.startsWith('10-Q');
+  const isQuarterly = form === 'QR';
   const len = isQuarterly ? 3 : 12;
   // notes: what was derived, as { code, ...params } for the UI to word
   const notes = [];

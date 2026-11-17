@@ -136,25 +136,15 @@ function fail(id, err) {
   close(id);
 }
 
-// TradingView spells share classes with a dot (BRK.B); EDGAR uses a dash.
-// EDGAR's ticker table spells share classes and other securities with a
-// dash; TradingView's names differ: BRK-B -> BRK.B, preferred ABR-PD ->
-// ABR/PD, warrant AAC-WT -> AAC/W, SPAC unit AAC-UN -> AAC.U. (Rights, -RI,
-// have no TradingView symbol that resolves.)
-export const tvSymbol = (ticker) =>
-  String(ticker)
-    .toUpperCase()
-    .replace(/-(P[A-Z]?)$/, '/$1')
-    .replace(/-WT$/, '/W')
-    .replace(/-UN$/, '.U')
-    .replace(/-/g, '.');
+// A TWSE code (2330, an ETF such as 0050 or 00878) is asked for on TWSE
+// explicitly - a bare number would resolve to some other market's listing;
+// anything with an exchange prefix already (TWSE:IX0001 …) goes as it is.
+export const tvSymbol = (ticker) => {
+  const t = String(ticker).toUpperCase();
+  return /^\d{4,6}[A-Z]?$/.test(t) ? `TWSE:${t}` : t;
+};
 
-// A bare ticker may resolve to another country's listing (COCO -> IDX:COCO,
-// Indonesia, instead of NASDAQ:COCO): EDGAR tickers are US listings, so a
-// non-US answer is retried with the US exchanges.
-const US_EXCHANGES = ['NASDAQ', 'NYSE', 'AMEX', 'OTC', 'CBOE', 'BATS', 'ARCA'];
-const isUS = (r) => !r.resolved || US_EXCHANGES.includes(String(r.resolved).split(':')[0]);
-const isSpread = (symbol) => /[*+\/-]/.test(String(symbol).replace(/-/g, ''));
+const isSpread = (symbol) => /[*+\/-]/.test(String(symbol));
 // "ABR/PD" that TradingView does not know is parsed as the spread ABR ÷ PD
 // (two exchange prefixes in the answer): not our symbol
 const twoLegs = (r) => /:[^/]+\/[^/]+:/.test(String(r.resolved || ''));
@@ -166,17 +156,7 @@ async function tvSecurity(symbol, opts) {
 
 export async function tvDailyBars(symbol, opts = {}) {
   if (isSpread(symbol)) return tvRequest(symbol, opts);
-  const r = await tvSecurity(symbol, opts);
-  if (isUS(r)) return r;
-  let lastErr = null;
-  for (const ex of US_EXCHANGES.slice(0, 4)) {
-    try {
-      return await tvSecurity(`${ex}:${tvSymbol(symbol)}`, opts);
-    } catch (err) {
-      lastErr = err;
-    }
-  }
-  throw lastErr || Object.assign(new Error(`TradingView: ${symbol} only found as ${r.resolved}`), { status: 404 });
+  return tvSecurity(symbol, opts);
 }
 
 // Daily bars of a symbol or spread, oldest first:

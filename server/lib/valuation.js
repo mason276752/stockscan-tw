@@ -6,10 +6,11 @@
 // page. What else it needs comes through `deps`, so the server and the
 // static build share this file (no Node I/O here):
 //   load(filing)    -> the filing's data (scrapeFiling / the saved file)
-//   shares(cik)     -> a structured cover-share index from SEC's companyconcept
-//                      API on the server; stored parsed cover facts carried by
-//                      the points below always win. When neither has a safe
-//                      count, the filing's diluted weighted-average shares stand in.
+//   shares(cik)     -> an extra cover-share index (none on either side now:
+//                      every saved report carries its own count - share
+//                      capital ÷ par value, see mopsFiling.js - which always
+//                      wins). When there is no safe count, the report's
+//                      weighted-average shares stand in.
 //   prices(ticker)  -> { symbol, source, currency, days: [{ date, close }],
 //                      splits, dividends?, fetchedAt, error?, eventsError? }
 //                      daily closes as the sources give them (split-adjusted
@@ -87,16 +88,16 @@ export function inferSplits(points, sharesOf) {
 // Currency the statements are reported in (most common monetary unit on the income statement).
 async function reportingCurrency(load, company, year, period) {
   const f = pickFiling(company.filings, { year, period }) || company.filings[0];
-  if (!f) return 'USD';
+  if (!f) return 'TWD';
   try {
     const data = await load(f);
     const counts = {};
     for (const stmt of [data.statements.income_statement, data.statements.balance_sheet]) {
       for (const li of stmt?.lineItems || []) for (const cell of Object.values(li.values)) if (/^[A-Z]{3}$/.test(cell.unit || '')) counts[cell.unit] = (counts[cell.unit] || 0) + 1;
     }
-    return Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0] || 'USD';
+    return Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0] || 'TWD';
   } catch {
-    return 'USD';
+    return 'TWD';
   }
 }
 
@@ -172,11 +173,11 @@ export async function buildValuation(company, { year, period, n = 20, adr = 1 },
   const hist = { ...raw, splits, splitsInferred: raw.splits == null, days: unadjusted(raw.days || [], splits) };
   hist.last = hist.days.at(-1) || null;
   const q = hist.last
-    ? { symbol: hist.symbol, price: hist.last.close, time: `${hist.last.date}T21:00:00Z`, date: hist.last.date, currency: hist.currency, source: hist.source, live: false }
+    ? { symbol: hist.symbol, price: hist.last.close, time: `${hist.last.date}T05:30:00Z`, date: hist.last.date, currency: hist.currency, source: hist.source, live: false }
     : { price: null, error: hist.error || 'no price data', source: null };
-  // statements in another currency than the quote (20-F filers, ADRs): convert
+  // statements in another currency than the quote (a few KY companies report in USD / CNY): convert
   // per-share figures with the FX rate of each date, times the ADR ratio
-  const quoteCurrency = q.currency || 'USD';
+  const quoteCurrency = q.currency || 'TWD';
   let fxHist = null;
   let fxNow = 1;
   if (reporting !== quoteCurrency) {

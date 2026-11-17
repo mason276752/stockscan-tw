@@ -47,9 +47,9 @@ function call(method, args = [], { onEvent = null, signal = null } = {}) {
 const forward = (method) => (...args) => call(method, args);
 
 // what the idle prefetcher (prefetch.js) warms after start-up: first the
-// indexes every page needs (search, company records, the statement
-// documentation - that one also loads the zstd decoder), then the big ones
-// behind the screener and the browse pages; the worker loads and keeps them.
+// indexes every page needs (search, scores, company records - that also
+// loads the zstd decoder), then the big ones behind the screener and the
+// browse page; the worker loads and keeps them.
 // On a slow connection (3G or below, or under 1.5 Mb/s as the browser
 // measures it) the big ones (0.3-3.5 MB each) are left to be fetched when a
 // page needs them: warming them would take minutes of the bandwidth the
@@ -57,10 +57,8 @@ const forward = (method) => (...args) => call(method, args);
 const WARMUP = [
   ['idx:tickers', 1],
   ['idx:scores', 1],
-  ['idx:documentation', 1],
   ['idx:tvsymbols', 0],
   ['idx:browse', 0],
-  ['idx:etfs', 0],
   ['idx:companies', 1, 'big'],
   ['idx:universe', 0, 'big'],
   ['idx:screen', 0, 'big'],
@@ -91,13 +89,8 @@ export const api = {
   screenUrl: () => null,
   scores: forward('scores'),
   score: forward('score'),
-  browseSic: forward('browseSic'),
-  browseFiler: forward('browseFiler'),
+  browseIndustry: forward('browseIndustry'),
   browseCompanies: forward('browseCompanies'),
-  browseEtfs: forward('browseEtfs'),
-  etfHoldings: forward('etfHoldings'),
-  etfHoldingsUrl: () => null,
-  etfLive: forward('etfLive'),
   quotesStatus: forward('quotesStatus'),
   tvSymbol: forward('tvSymbol'),
   ibConnect: forward('ibConnect'),

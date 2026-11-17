@@ -1,12 +1,14 @@
-// Quarterly view for one fiscal year: Q1, Q2, Q3 from the 10-Qs, FY from the
-// 10-K, and Q4 derived as FY − Q1 − Q2 − Q3 (equivalently FY − nine-month YTD).
+// Quarterly view for one year: Q1, Q2, Q3 from the quarterly reports, FY from
+// the annual report, and Q4 derived as FY − Q1 − Q2 − Q3 (equivalently FY −
+// nine-month YTD).
 //
-// 10-Q flow statements report either three-month columns, year-to-date
-// columns or both; cash flow statements are usually YTD only. So each quarter
-// is computed from cumulative amounts: C1..C3 come from the 10-Qs (YTD column
-// if present, otherwise previous cumulative + three-month column), C4 is the
-// 10-K, and Qn = Cn − Cn−1. Balance sheets are point-in-time, so their
-// quarterly columns are simply the period-end balances of each filing.
+// Quarterly reports' flow statements have three-month columns, year-to-date
+// columns or both (Taiwan's Q2 / Q3 income statements have both, their cash
+// flow statements are year-to-date only). So each quarter is computed from
+// cumulative amounts: C1..C3 come from the quarterly reports (YTD column if
+// present, otherwise previous cumulative + three-month column), C4 is the
+// annual report, and Qn = Cn − Cn−1. Balance sheets are point-in-time, so
+// their quarterly columns are simply the period-end balances of each report.
 
 import { pickFiling } from './filings.js';
 
@@ -87,7 +89,7 @@ function buildStatementQuarters(type, docs, filings) {
   const fyEnd = filings.FY.reportDate;
   const isInstant = type === 'balance_sheet';
 
-  // Current-year columns of the 10-K, grouped by dimension.
+  // Current-year columns of the annual report, grouped by dimension.
   let fyStart = null;
   const groups = [];
   for (const c of fy.columns) {
@@ -199,6 +201,7 @@ function buildStatementQuarters(type, docs, filings) {
   return {
     type,
     title: fy.title,
+    titleZh: fy.titleZh,
     role: fy.role,
     parenthetical: false,
     axes: fy.axes,
@@ -322,12 +325,38 @@ const EXT_ALIASES = {
   InterestAndDebtExpense: 'us-gaap:InterestAndDebtExpense',
   InvestmentAndDebtInterestIncomeExpenseNet: 'us-gaap:InvestmentAndDebtInterestIncomeExpenseNet',
 };
+// Taiwan IFRS (tifrs-bsci-ci:, tifrs-bsci-basi: … one prefix per industry
+// template) lines the ratios know by their IFRS name
+const TW_ALIASES = {
+  OperatingCosts: 'ifrs-full:CostOfSales',
+};
 const canon = (concept) => {
   if (SYNONYMS[concept]) return SYNONYMS[concept][0];
   const [prefix, local] = concept.split(':');
+  if (local && prefix.startsWith('tifrs-')) return TW_ALIASES[local] || concept;
   if (local && prefix !== 'us-gaap' && prefix !== 'ifrs-full' && EXT_ALIASES[local]) return EXT_ALIASES[local];
   return concept;
 };
+
+// Taiwan practice counts notes, trade and related-party receivables (and
+// payables) together in the turnover ratios: their sums, by the lines'
+// local names (the prefix depends on the industry template).
+const TW_SUMS = {
+  'tw:Receivables': /^(NotesReceivableNet|AccountsReceivableNet|AccountsReceivableDuefromRelatedPartiesNet|NotesReceivableDueFromRelatedPartiesNet)$/,
+  'tw:Payables': /^(NotesPayable|NotesPayableToRelatedParties|TradeAndOtherCurrentPayablesToTradeSuppliers|TradeAndOtherCurrentPayablesToRelatedParties)$/,
+};
+function twSums(stmt, colId, into) {
+  if (!stmt?.role?.startsWith('tw:')) return into;
+  for (const [key, re] of Object.entries(TW_SUMS)) {
+    let total = null;
+    for (const li of stmt.lineItems) {
+      const v = li.values[colId]?.value;
+      if (!li.abstract && typeof v === 'number' && re.test(li.concept.split(':').pop())) total = (total ?? 0) + v;
+    }
+    if (total != null) into[key] = total;
+  }
+  return into;
+}
 
 // Columns for the same period as colId that carry exactly one dimension: a
 // line reported only per member (Intuit tags cost of revenue by product /
@@ -356,6 +385,12 @@ export function lineValue(li, colId, samePeriod) {
   return samePeriod?.length ? rolledUp(li, samePeriod) : undefined;
 }
 
+// MOPS reports sign a cash flow statement's outflows negative (取得不動產、
+// 廠房及設備 -100); the ratios take payments - capital spending, dividends
+// paid, shares bought back - as positive amounts, the way SEC filers tag them
+const TW_OUTFLOW = /^(PurchaseOf|PaymentsTo|PaymentsFor|PaymentsOf|DividendsPaid|AcquisitionOf|Repayments)/;
+const twOutflow = (stmt, li) => stmt.type === 'cash_flow' && stmt.role?.startsWith('tw:') && TW_OUTFLOW.test(li.concept.split(':').pop());
+
 export function factsAt(stmt, colId, into) {
   if (!stmt || !colId) return into;
   const samePeriod = rollupColumns(stmt, colId);
@@ -370,7 +405,7 @@ export function factsAt(stmt, colId, into) {
     if (key in into && !(exact && aliased.has(key))) continue;
     const cell = li.values[colId];
     if (cell && typeof cell.value === 'number') {
-      into[key] = cell.value;
+      into[key] = twOutflow(stmt, li) ? -cell.value : cell.value;
       if (exact) aliased.delete(key);
       else aliased.add(key);
       continue;
@@ -443,8 +478,10 @@ const classifyName = (concept) => concept.split(':').pop().replace(/(Excluding|N
 const OVERHEAD_EXACT = /^(SellingGeneralAndAdministrativeExpense|GeneralAndAdministrativeExpense|ResearchAndDevelopmentExpense|ProfessionalFees|LegalFees|StockOrUnitOptionPlanExpense|AllocatedShareBasedCompensationExpense|OperatingLeaseExpense|OtherGeneralExpense|OtherExpenses|LaborAndRelatedExpense|SalariesAndWages|EmployeeBenefitsAndShareBasedCompensation|OfficersCompensation|ProvisionForDoubtfulAccounts|BusinessCombinationAcquisitionRelatedCosts|MarketingAndAdvertisingExpense|TravelAndEntertainmentExpense|OtherSellingGeneralAndAdministrativeExpense|Franchise.*Tax|FranchisorCosts|MarketingFundExpenses|OccupancyNet|OtherSellingAndMarketingExpense|Communications?|CommunicationsAndInformationTechnology|RegulatoryFeesAndAssessments|BusinessDevelopment|InvestorRelations|DirectorsRemunerationExpense|AccountingAndAuditFees|AuditFees|ShareBasedCompensation|CompensationExpense|EmployeeBenefitsExpense|WagesAndSalaries|SalariesWagesAndOfficersCompensation|ExplorationAndEvaluationCosts|FormationAndOperationalCosts|AdministrativeFeesExpense|AdministrativeExpense|SellingAndDistributionExpense|OtherExpenseByFunction|OtherExpenseByNature|PatentDevelopmentCosts|LitigationSettlementExpense)$/;
 const NOISE = /FairValue|ContingentConsideration|Warrant|Remeasurement|Litigation|Settlement|LossContingency|^Interest(Income|Expense|AndDebt|AndDividend)|EquityMethod|GainLoss|Derivative/;
 
+// (MOPS statements follow one standard chart of accounts: a cost of revenue
+// is the 營業成本 line or there is none - nothing to estimate)
 export function costOfRevenueFromHeading(stmt, colId) {
-  if (!stmt || !colId) return null;
+  if (!stmt || !colId || stmt.role?.startsWith('tw:')) return null;
   const items = stmt.lineItems;
   const samePeriod = rollupColumns(stmt, colId);
   const val = (li) => lineValue(li, colId, samePeriod);
@@ -514,7 +551,7 @@ export function costOfRevenueFromHeading(stmt, colId) {
 // Such a filer has no cost of revenue at all - as opposed to one whose cost
 // lines merely could not be told apart, which stays unknown.
 export function noCostOfRevenue(stmt, colId) {
-  if (!stmt || !colId) return false;
+  if (!stmt || !colId || stmt.role?.startsWith('tw:')) return false;
   const items = stmt.lineItems;
   const samePeriod = rollupColumns(stmt, colId);
   const val = (li) => lineValue(li, colId, samePeriod);
@@ -554,7 +591,7 @@ export function flowsAt(data, { end, monthsLen }) {
 export function balancesAt(data, instant) {
   const stmt = statementOf(data, 'balance_sheet');
   const col = findColumn(stmt, { dims: '', instant });
-  return factsAt(stmt, col?.id, {});
+  return twSums(stmt, col?.id, factsAt(stmt, col?.id, {}));
 }
 
 export function yearQuarterPoints(docs, filings) {

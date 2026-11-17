@@ -107,7 +107,7 @@ export function simplifyStatement(stmt) {
 
   // One total column per period: the filer's undimensioned column where
   // there is one, else a synthetic column filled entirely by roll-ups (a
-  // 10-Q equity statement carries the prior quarter's roll-forward only in
+  // quarterly equity statement carries the prior quarter's roll-forward only in
   // its component columns).
   const byPeriod = new Map();
   for (const c of stmt.columns) {
