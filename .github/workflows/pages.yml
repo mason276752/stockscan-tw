@@ -38,7 +38,7 @@ on:
   workflow_dispatch:
     inputs:
       fetch_budget:
-        description: 'Minutes to spend fetching reports from MOPS in this run (~15 reports a minute; all ~1,000 companies × 12 quarters take about 15 hours in total)'
+        description: 'Minutes to spend fetching reports from MOPS in this run (15 reports a minute; all ~1,000 companies × 12 quarters take about 15 hours in total)'
         required: false
         default: '60'
 
@@ -61,6 +61,9 @@ jobs:
       STOCKSCAN_CRAWL: '0'
       STOCKSCAN_FETCH_BUDGET: ${{ inputs.fetch_budget || '60' }}
       STOCKSCAN_MOPS_PARALLEL: '8'
+      # one report every 4 s: MOPS answers 307 to everything once a client
+      # goes much faster (a runner downloads ~70 a minute if let)
+      STOCKSCAN_MOPS_INTERVAL: '4000'
       IB_ENABLED: '0'
       TV_ENABLED: '0'
     steps:

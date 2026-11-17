@@ -43,7 +43,7 @@ const crawler = createCrawler(client, { enabled: false });
 const r = await crawler.runOnce({ budgetMs: budgetMin * 60_000, depth });
 for (const f of r.log.slice(0, 30)) console.log(`fetch-new: ${f.ticker} ${f.name} ${f.fiscalYear} ${f.fiscalPeriod}`);
 console.log(
-  `fetch-new: ${r.saved} reports saved, ${r.missing} not on MOPS, ${r.failed} failed; ${r.done} of ${r.planned} planned` +
+  `fetch-new: ${r.saved} reports saved, ${r.missing} not on MOPS, ${r.failed} failed${r.refused ? `, ${r.refused} refused by MOPS (rate limit)` : ''}; ${r.done} of ${r.planned} planned` +
     `${r.budgetExhausted ? ` (budget of ${budgetMin} min used up - the next run continues)` : ''}; store ${before} -> ${store.filingCount()}, ${((Date.now() - t0) / 1000).toFixed(0)} s`,
 );
 await scoreUnscored({ budgetMs: 5000, log: (m) => console.log(`fetch-new: ${m}`) });

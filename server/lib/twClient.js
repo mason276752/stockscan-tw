@@ -100,6 +100,10 @@ export class TwClient {
             continue;
           }
           if (res.status === 404) throw Object.assign(new Error(`Not found: ${url}`), { status: 404 });
+          // MOPS's firewall answers a client that asked too much too fast with
+          // a bare 307 (no Location) to everything for a while: no point
+          // retrying here - the crawler pauses and slows down (crawler.js)
+          if (res.status === 307 || res.status === 403) throw Object.assign(new Error(`${host} refused the request (HTTP ${res.status}: rate limited) for ${url}`), { status: res.status, blocked: true });
           if (!res.ok) throw Object.assign(new Error(`${host} returned ${res.status} for ${url}`), { status: res.status });
           return Buffer.from(await res.arrayBuffer());
         } catch (err) {

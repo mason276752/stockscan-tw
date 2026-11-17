@@ -19,7 +19,9 @@ Inline XBRL 財報，輸出資產負債表、綜合損益表、現金流量表�
 - 財報之外：財務指標與評分、股價估值、產業分類瀏覽、尋找股票、觀察名單，以及把篩選結果或觀察名單組成**自製 ETF** 畫日 K
   （股價一律 TradingView → IBKR TWS → Yahoo；K 線圖為 TradingView）。
 
-> MOPS 每條連線只有約 30 KB/s，一份財報頁 0.5–2 MB，所以抓一份約 20–40 秒；爬蟲同時開幾條連線（`STOCKSCAN_MOPS_PARALLEL`，預設 6）。
+> MOPS 有流量限制：抓太快（GitHub runner 一分鐘可抓約 70 份）不到一分鐘就會被防火牆擋下，之後每個請求都回 307。
+> 所以爬蟲**每 4 秒才開始抓一份**（`STOCKSCAN_MOPS_INTERVAL`，一分鐘 15 份）；被擋時整批暫停（2 分鐘起、持續被擋就加倍，最多 15 分鐘）並放慢 1.5 倍，
+> 被擋的財報排到後面重試、不算失敗，連續被擋太多次就結束這一批、下一批再接著抓。
 > 全部上市公司 × 最近 12 季約 13,000 份，從零開始要累積十幾個小時——CI 每三小時一批、每批抓 60 分鐘，先抓每家最新一季、再往前補：
 > 新 repo 跑一兩批後每家公司都有最新一季，兩三天內補齊歷史。
 
@@ -50,7 +52,8 @@ npm --prefix web run dev            # 前端 :5173，/api 代理到 :3000
 | `STOCKSCAN_CRAWL=0` | 關閉背景財報爬蟲 |
 | `STOCKSCAN_DEPTH` | 每家公司保留最近幾季財報（預設 12 = 三年） |
 | `STOCKSCAN_FROM_YEAR` | 財報選單最早列到哪一年（預設六年前；伺服器版點到沒存的季度會即時去 MOPS 抓） |
-| `STOCKSCAN_MOPS_PARALLEL` | 同時向 MOPS 開幾條連線（預設 6） |
+| `STOCKSCAN_MOPS_PARALLEL` | 同時向 MOPS 開幾條連線（預設 6；MOPS 每條連線在台灣約 30 KB/s，慢的時候靠並行補） |
+| `STOCKSCAN_MOPS_INTERVAL` | 兩份財報開始下載的最小間隔（毫秒，預設 4000；太快會被 MOPS 擋） |
 | `STOCKSCAN_FETCH_BUDGET` | `npm run fetch:new` 的時間預算（分鐘，預設 40；`--budget` 參數優先） |
 | `STOCKSCAN_BARS_CRAWL=0` | 關閉每日收盤後全市場日線的背景抓取 |
 | `TV_ENABLED=0` | 不用 TradingView websocket |
