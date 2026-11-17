@@ -97,6 +97,7 @@ npm run build:static        # -> web/dist-static/（網頁 + data/store + data/b
      補齊之後每批只剩新公布的財報，幾分鐘就結束。
 2. `npm run fetch:bars`：從 TradingView 把今年的日線補到最新（`actions/cache` 在兩次 run 之間留住）。
 3. 把 `data/store`、`data/bars`（已結束的年份）在 `refs/data/main` 上**多 commit 一個並 push**——repo 還沒有這個 ref 時第一次會自己建立。
+   push 到 `main` 觸發的 run 不抓財報，但日線與上市公司表照樣更新、照樣 commit。
 4. `npm run rescore`、`build-static`、部署。
 
 Runner 上 `data/cache.sqlite` 用 `actions/cache` 保留；上市公司表（`listed.json`）與「MOPS 沒有的財報」清單在 data ref 裡，TWSE 暫時連不上也能 build。
