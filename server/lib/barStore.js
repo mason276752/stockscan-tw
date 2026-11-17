@@ -260,6 +260,10 @@ export const barStore = {
     const hit = lru.get(`${src}:${String(symbol).toUpperCase()}`);
     if (hit) return hit.fetchedAt;
     const d = dir(src, symbol);
+    // this year's head without the meta.json and finished years it continues
+    // (a CI cache restored head.zst but they never reached the data ref) is
+    // no series: report it unfetched so the whole history is fetched again
+    if (!fs.existsSync(path.join(d, 'meta.json'))) return null;
     try {
       return unpack(fs.readFileSync(path.join(d, 'head.zst'))).fetchedAt || null;
     } catch {
