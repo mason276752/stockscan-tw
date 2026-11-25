@@ -163,7 +163,7 @@ export default {
   // FilingPicker / CompanySearch / CompanyTable
   'fp.q4Title': 'Derived as FY − Q1 − Q2 − Q3',
   'fp.deriveTitle': 'Derive Q4: the annual report minus the Q1–Q3 reports',
-  'fp.none': 'No reports for this company yet: depositary receipts (910xxx) have no Taiwan XBRL reports; a holding company just set up by share exchange has none until its first quarter is out, or those of its predecessor are connected; for the others the scheduled runs download a batch every three hours and fill them in.',
+  'fp.none': 'No reports for this company yet: depositary receipts (910xxx) have no Taiwan XBRL reports; a holding company just set up by share exchange has none until its first quarter is out, or those of its predecessor are connected; for the others the scheduled run downloads a batch after the close of every trading day and fills them in.',
   'fp.hint': 'Q4* = FY − Q1 − Q2 − Q3; needs all four filings of the year.',
   'search.placeholder': 'Company code or name, e.g. 2330, 2454, TSMC',
   'col.ticker': 'Code',

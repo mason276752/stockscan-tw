@@ -162,7 +162,7 @@ export default {
   // FilingPicker / CompanySearch / CompanyTable
   'fp.q4Title': 'FY − Q1 − Q2 − Q3 推算',
   'fp.deriveTitle': '用年報減 Q1–Q3 季報推算第四季',
-  'fp.none': '目前沒有這家公司的財報：存託憑證（910xxx）沒有台灣 XBRL 財報；剛換股成立的投資控股公司要等第一份季報，或等前身的財報接上；其他公司的財報由排程每三小時下載一批，會陸續補上。',
+  'fp.none': '目前沒有這家公司的財報：存託憑證（910xxx）沒有台灣 XBRL 財報；剛換股成立的投資控股公司要等第一份季報，或等前身的財報接上；其他公司的財報由排程在每個交易日收盤後下載一批，會陸續補上。',
   'fp.hint': 'Q4* = FY − Q1 − Q2 − Q3，需要該年度四份財報齊全。',
   'search.placeholder': '輸入公司代號或名稱，例如 2330、台積電、聯發科',
   'col.ticker': '代號',
