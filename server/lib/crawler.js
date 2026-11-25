@@ -26,7 +26,7 @@
 import { store } from './store.js';
 import { listedTable, latestPeriods, refreshListed, purgeDelisted } from './twse.js';
 import { newestPeriod, candidatePeriods, knownMissing, companyRecord } from './companies.js';
-import { filingRecord } from './filings.js';
+import { reportOf } from './predecessors.js';
 import { ensureStored } from './scrape.js';
 import { scoreAccession } from './score.js';
 
@@ -57,7 +57,7 @@ export function planPass(listed, latest, { depth = DEPTH, fails = {} } = {}) {
     const top = lp || fallback;
     const periods = candidatePeriods(top, top.year - Math.ceil(depth / 4) - 1).slice(0, depth);
     periods.forEach((p, i) => {
-      const filing = filingRecord(c.ticker, p.year, p.quarter, { reportId: c.reportType });
+      const filing = reportOf(c, p.year, p.quarter, { reportId: c.reportType });
       if (store.hasFiling(filing.accession) || (fails[filing.accession] || 0) >= MAX_FAILS) return;
       // a quarter TWSE says is out is asked for even when MOPS said no lately
       if (knownMissing(filing.accession) && !(lp && key(p) === key(lp))) return;

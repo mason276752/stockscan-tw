@@ -7,6 +7,7 @@
 import { store } from './store.js';
 import { listedTable, latestPeriods, savedListed } from './twse.js';
 import { filingRecord, parseAccession, deadlineOf, byPeriodDesc, pickFiling } from './filings.js';
+import { reportOf } from './predecessors.js';
 import { industryInfo } from './industry.js';
 import { searchListed } from './companySearch.js';
 
@@ -123,7 +124,7 @@ export function savedFilings(cik) {
     const p = parseAccession(r.accession);
     if (!p) continue;
     const h = store.filingHeader(r.accession);
-    out.push({ ...filingRecord(p.code, p.year, p.quarter, { filingDate: h?.filingDate, reportId: h?.reportId }), saved: true });
+    out.push({ ...filingRecord(p.code, p.year, p.quarter, { cik, filingDate: h?.filingDate, reportId: h?.reportId }), saved: true });
   }
   return out.sort(byPeriodDesc);
 }
@@ -142,7 +143,7 @@ export async function getCompany(client, id) {
   if (row.industry !== '91') {
     // depositary receipts file no Taiwan IFRS reports
     for (const { year, quarter } of candidatePeriods(latest)) {
-      const f = filingRecord(row.ticker, year, quarter, { reportId: row.reportType });
+      const f = reportOf(row, year, quarter, { reportId: row.reportType });
       if (saved.has(f.accession)) filings.push(saved.get(f.accession));
       else if (!knownMissing(f.accession)) filings.push(f);
       saved.delete(f.accession);

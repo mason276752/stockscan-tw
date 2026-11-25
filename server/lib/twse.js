@@ -17,6 +17,7 @@
 // has it).
 
 import { store } from './store.js';
+import { adoptPredecessors } from './predecessors.js';
 
 const API = 'https://openapi.twse.com.tw/v1/opendata/';
 const LISTED_TTL = 24 * 3600 * 1000;
@@ -128,11 +129,14 @@ export async function latestPeriods(client, { refresh = false } = {}) {
 }
 
 // Delisted companies (no longer in the table) are nothing to buy: throw
-// their saved reports and scores away. Only after a fresh, plausible table -
-// a truncated download must not empty the store.
+// their saved reports and scores away - unless a holding company took their
+// place, which then has them. Only after a fresh, plausible table - a
+// truncated download must not empty the store.
 const MIN_LISTED = 800;
 export function purgeDelisted(rows) {
   if (!Array.isArray(rows) || rows.length < MIN_LISTED) return null;
+  const adopted = adoptPredecessors(rows);
+  if (adopted) console.log(`store: ${adopted} 份財報轉到承接的投資控股公司`);
   const r = store.purgeExcept(rows.map((c) => c.cik));
   if (r.companies) console.log(`store: 移除 ${r.companies} 家已下市公司的 ${r.filings} 份財報（TWSE 上市公司表已無此公司）`);
   return r;

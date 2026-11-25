@@ -2,6 +2,7 @@
 
 import { parseMopsFiling, decodeMops, isMissing } from './mopsFiling.js';
 import { mopsUrls, parseAccession } from './filings.js';
+import { asSuccessors } from './predecessors.js';
 import { reclassify } from './statementTypes.js';
 import { store } from './store.js';
 import { markMissing, clearMissing } from './companies.js';
@@ -62,7 +63,7 @@ async function scrapeUncached(client, filing, company) {
     if (isMissing(html)) continue;
     const result = parseMopsFiling(html, { code: p.code, year: p.year, quarter: p.quarter, reportId, par: company?.par || 10 });
     clearMissing(filing.accession);
-    return result;
+    return filing.cik === Number(p.code) ? result : asSuccessors(result, filing.cik);
   }
   markMissing(filing.accession);
   throw Object.assign(new Error(`MOPS 沒有 ${p.code} ${p.year} 年第 ${p.quarter} 季的 XBRL 財報`), { status: 404, missing: true });

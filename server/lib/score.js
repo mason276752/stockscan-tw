@@ -20,7 +20,7 @@ function savedCompany(cik, reportDate) {
     if (!r.report_date || r.report_date < from || r.report_date > reportDate) continue;
     const p = parseAccession(r.accession);
     if (!p) continue;
-    filings.push(filingRecord(p.code, p.year, p.quarter, { filingDate: store.filingHeader(r.accession)?.filingDate }));
+    filings.push(filingRecord(p.code, p.year, p.quarter, { cik, filingDate: store.filingHeader(r.accession)?.filingDate }));
   }
   filings.sort(byPeriodDesc);
   return { cik: Number(cik), filings };

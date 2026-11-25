@@ -45,6 +45,8 @@ export default {
   'note.ytdOnly': '{title}: the report has year-to-date columns only and the previous quarter\'s report is not available, so year-to-date ({start} ~ {end}) is shown.',
   'note.compare': 'For comparative columns switch "Columns → All columns of the report".',
   'note.derived': 'Income statement / cash flow: Q1–Q3 from the quarterly reports (three-month columns, or year-to-date columns subtracted), Q4 = annual report − the first three quarters. Per-share amounts are approximate when subtracted (marked ≈); share counts and other non-subtractable items are left blank for Q4. Balance sheets are the quarter-end balances. No derivation for the equity statement.',
+  'note.predecessor': '{now} is a holding company set up by share exchange and did not exist in this period: this is the report of its predecessor, {name} ({code}). The exchange is a reorganisation under common control, so the balance sheet and the results carry straight on.',
+  'note.predecessorPer': 'The exchange was {per} old shares for one new, so amounts per share are multiplied by {per} here and share counts divided by {per}, to the basis of the new share - they differ from the original document.',
   'stmt.balance_sheet': 'Balance sheet',
   'stmt.income_statement': 'Income statement',
   'stmt.cash_flow': 'Cash flow',
@@ -161,7 +163,7 @@ export default {
   // FilingPicker / CompanySearch / CompanyTable
   'fp.q4Title': 'Derived as FY − Q1 − Q2 − Q3',
   'fp.deriveTitle': 'Derive Q4: the annual report minus the Q1–Q3 reports',
-  'fp.none': 'No reports for this company yet: depositary receipts (910xxx) have no Taiwan XBRL reports; for the others the scheduled runs download a batch every three hours and fill them in.',
+  'fp.none': 'No reports for this company yet: depositary receipts (910xxx) have no Taiwan XBRL reports; a holding company just set up by share exchange has none until its first quarter is out, or those of its predecessor are connected; for the others the scheduled runs download a batch every three hours and fill them in.',
   'fp.hint': 'Q4* = FY − Q1 − Q2 − Q3; needs all four filings of the year.',
   'search.placeholder': 'Company code or name, e.g. 2330, 2454, TSMC',
   'col.ticker': 'Code',

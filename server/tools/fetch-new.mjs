@@ -15,6 +15,7 @@ import { openStore, requireVersion, store } from '../lib/store.js';
 import { SCRAPE_VERSION } from '../lib/scrape.js';
 import { createCrawler, DEPTH } from '../lib/crawler.js';
 import { refreshListed, savedListed, purgeDelisted } from '../lib/twse.js';
+import { unmapped } from '../lib/predecessors.js';
 import { scoreUnscored } from '../lib/score.js';
 
 const args = process.argv.slice(2);
@@ -34,6 +35,8 @@ try {
   const rows = await refreshListed(client);
   console.log(`fetch-new: TWSE listed companies ${rows.length}`);
   purgeDelisted(rows);
+  // (::warning:: shows on the run's page in GitHub Actions)
+  for (const c of unmapped(rows)) console.warn(`${process.env.GITHUB_ACTIONS ? '::warning::' : 'fetch-new: '}${c.ticker} ${c.name} 在 ${c.listedDate} 成立並上市，但沒有前身對照，換股前的財報接不上 - 請補進 server/lib/predecessors.js`);
 } catch (err) {
   // the saved table still says who is listed; nothing is purged on a failed download
   console.warn(`fetch-new: TWSE listed-company table: ${err.message} - using the saved one (${savedListed()?.value.length ?? 0})`);

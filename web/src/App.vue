@@ -557,6 +557,10 @@ onMounted(() => {
             {{ t('note.compare') }}
           </Note>
           <Note v-if="data.derived && !isIndicators && !isValuation && !isChart">{{ t('note.derived') }}</Note>
+          <Note v-if="data.filing.predecessor && !isChart">
+            {{ t('note.predecessor', { code: data.filing.predecessor.code, name: data.filing.predecessor.name, now: company.name }) }}
+            <template v-if="data.filing.predecessor.per !== 1">{{ t('note.predecessorPer', { per: data.filing.predecessor.per }) }}</template>
+          </Note>
 
           <div class="toolbar">
             <div class="tabs">

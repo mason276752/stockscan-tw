@@ -38,10 +38,11 @@ export function mopsUrls(code, year, quarter, reportId = 'C') {
   return { documentUrl, viewerUrl: documentUrl, indexUrl: documentUrl };
 }
 
-// One entry of a company's filing list.
+// One entry of a company's filing list. `extra.cik`: the company whose list
+// it is, when the report is filed under another code (predecessors.js).
 export function filingRecord(code, year, quarter, extra = {}) {
   return {
-    cik: Number(code),
+    cik: Number(extra.cik ?? code),
     accession: accessionOf(code, year, quarter),
     form: formOf(quarter),
     reportDate: periodEndOf(year, quarter),

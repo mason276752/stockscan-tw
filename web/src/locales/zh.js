@@ -44,6 +44,8 @@ export default {
   'note.ytdOnly': '{title}：財報只有年初至今欄，且找不到上一季財報，顯示年初至今（{start} ~ {end}）。',
   'note.compare': '比較欄位請切換「欄位 → 財報全部欄位」。',
   'note.derived': '損益表 / 現金流量表：Q1–Q3 取自季報（三個月欄或年初至今欄相減），Q4 = 年報全年 − 前三季。每股金額以相減近似（以 ≈ 標示）；股數等不可相減的項目 Q4 留空。資產負債表為各季期末餘額。權益變動表不提供推算。',
+  'note.predecessor': '{now}是換股成立的投資控股公司，這一期當時還沒有它：這是前身 {name}（{code}）的財報。換股屬組織重組，資產負債與損益前後相接。',
+  'note.predecessorPer': '換股比例是 {per} 股換 1 股，這裡的每股金額已乘以 {per}、股數已除以 {per}，換算成新股的基礎，所以和原始文件不同。',
   'stmt.balance_sheet': '資產負債表',
   'stmt.income_statement': '損益表',
   'stmt.cash_flow': '現金流量表',
@@ -160,7 +162,7 @@ export default {
   // FilingPicker / CompanySearch / CompanyTable
   'fp.q4Title': 'FY − Q1 − Q2 − Q3 推算',
   'fp.deriveTitle': '用年報減 Q1–Q3 季報推算第四季',
-  'fp.none': '目前沒有這家公司的財報：存託憑證（910xxx）沒有台灣 XBRL 財報；其他公司的財報由排程每三小時下載一批，會陸續補上。',
+  'fp.none': '目前沒有這家公司的財報：存託憑證（910xxx）沒有台灣 XBRL 財報；剛換股成立的投資控股公司要等第一份季報，或等前身的財報接上；其他公司的財報由排程每三小時下載一批，會陸續補上。',
   'fp.hint': 'Q4* = FY − Q1 − Q2 − Q3，需要該年度四份財報齊全。',
   'search.placeholder': '輸入公司代號或名稱，例如 2330、台積電、聯發科',
   'col.ticker': '代號',

@@ -197,7 +197,7 @@ for (const row of listed) {
     const p = parseAccession(rec.accession);
     const h = store.filingHeader(rec.accession);
     if (!p || !h) continue;
-    const full = filingRecord(p.code, p.year, p.quarter, { filingDate: h.filingDate, reportId: h.reportId });
+    const full = filingRecord(p.code, p.year, p.quarter, { cik: row.cik, filingDate: h.filingDate, reportId: h.reportId });
     const f = { accession: full.accession, form: full.form, filingDate: full.filingDate, reportDate: full.reportDate, fiscalYear: full.fiscalYear, fiscalPeriod: full.fiscalPeriod, reportId: full.reportId };
     if (rec.file !== filingFile(row.cik, f, SCRAPE_VERSION)) f.file = rec.file;
     const sf = scoreFiles.get(rec.accession);
